@@ -11,7 +11,7 @@ canvas.height = height;
 
 const engine = Engine.create();
 const world = engine.world;
-world.gravity.y = 1.2;
+world.gravity.y = 0.9;
 
 const render = Render.create({
   canvas,
@@ -30,14 +30,14 @@ Runner.run(runner, engine);
 
 let score = 0;
 let gameOver = false;
-let currentShape = null;
-let shapeDropped = false;
+let currentCat = null;
+let catDropped = false;
 let moveLeft = false;
 let moveRight = false;
 
 const tableX = width / 2;
-const tableWidth = 420;
-const tableTopY = height - 170;
+const tableWidth = 500;
+const tableY = height - 170;
 const floorTop = height - 110;
 
 const ground = Bodies.rectangle(width / 2, height + 40, width, 80, {
@@ -55,7 +55,7 @@ const rightWall = Bodies.rectangle(width + 30, height / 2, 60, height, {
   render: { visible: false }
 });
 
-const table = Bodies.rectangle(tableX, tableTopY, tableWidth, 26, {
+const table = Bodies.rectangle(tableX, tableY, tableWidth, 26, {
   isStatic: true,
   label: "table",
   render: {
@@ -65,14 +65,14 @@ const table = Bodies.rectangle(tableX, tableTopY, tableWidth, 26, {
   }
 });
 
-const tableLegLeft = Bodies.rectangle(tableX - 150, tableTopY + 70, 28, 140, {
+const tableLegLeft = Bodies.rectangle(tableX - 170, tableY + 80, 28, 160, {
   isStatic: true,
   render: {
     fillStyle: "#6a4125"
   }
 });
 
-const tableLegRight = Bodies.rectangle(tableX + 150, tableTopY + 70, 28, 140, {
+const tableLegRight = Bodies.rectangle(tableX + 170, tableY + 80, 28, 160, {
   isStatic: true,
   render: {
     fillStyle: "#6a4125"
@@ -81,91 +81,58 @@ const tableLegRight = Bodies.rectangle(tableX + 150, tableTopY + 70, 28, 140, {
 
 World.add(world, [ground, leftWall, rightWall, table, tableLegLeft, tableLegRight]);
 
-function randomShapeColor() {
+function randomCatColor() {
   const colors = ["#ff9f1c", "#ff595e", "#8ac926", "#1982c4", "#6a4c93"];
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
-function createShape(x, y, isStatic = false) {
-  const color = randomShapeColor();
-  const type = Math.floor(Math.random() * 3);
-
-  if (type === 0) {
-    return Bodies.rectangle(x, y, 82, 54, {
-      isStatic,
-      label: "stackShape",
-      chamfer: { radius: 10 },
-      friction: 1.1,
-      restitution: 0.08,
-      density: 0.0025,
-      render: {
-        fillStyle: color,
-        strokeStyle: "#2b2b2b",
-        lineWidth: 2
-      }
-    });
-  }
-
-  if (type === 1) {
-    return Bodies.polygon(x, y, 3, 40, {
-      isStatic,
-      label: "stackShape",
-      friction: 1.1,
-      restitution: 0.08,
-      density: 0.0025,
-      render: {
-        fillStyle: color,
-        strokeStyle: "#2b2b2b",
-        lineWidth: 2
-      }
-    });
-  }
-
-  return Bodies.polygon(x, y, 6, 34, {
+function createCat(x, y, isStatic = false) {
+  return Bodies.rectangle(x, y, 88, 58, {
     isStatic,
-    label: "stackShape",
-    friction: 1.1,
-    restitution: 0.08,
-    density: 0.0025,
+    label: "cat",
+    chamfer: { radius: 18 },
+    friction: 0.9,
+    restitution: 0.05,
+    density: 0.002,
     render: {
-      fillStyle: color,
+      fillStyle: randomCatColor(),
       strokeStyle: "#2b2b2b",
       lineWidth: 2
     }
   });
 }
 
-function spawnShape() {
+function spawnCat() {
   if (gameOver) return;
 
-  currentShape = createShape(tableX, 90, true);
-  shapeDropped = false;
-  World.add(world, currentShape);
+  currentCat = createCat(tableX, 90, true);
+  catDropped = false;
+  World.add(world, currentCat);
 }
 
-function dropCurrentShape() {
-  if (!currentShape || shapeDropped || gameOver) return;
+function dropCurrentCat() {
+  if (!currentCat || catDropped || gameOver) return;
 
-  Body.setStatic(currentShape, false);
-  Body.setAngle(currentShape, (Math.random() - 0.5) * 0.25);
-  Body.setVelocity(currentShape, { x: 0, y: 2.5 });
+  Body.setStatic(currentCat, false);
+  Body.setVelocity(currentCat, { x: 0, y: 1.5 });
+  Body.setAngularVelocity(currentCat, (Math.random() - 0.5) * 0.02);
 
-  shapeDropped = true;
+  catDropped = true;
   score += 1;
   scoreEl.textContent = score;
 
   setTimeout(() => {
     if (!gameOver) {
-      spawnShape();
+      spawnCat();
     }
-  }, 700);
+  }, 1600);
 }
 
 function restartGame() {
   const allBodies = Composite.allBodies(world);
 
   for (const body of allBodies) {
-    if (body.label === "stackShape") {
+    if (body.label === "cat") {
       World.remove(world, body);
     }
   }
@@ -173,10 +140,10 @@ function restartGame() {
   score = 0;
   scoreEl.textContent = score;
   gameOver = false;
-  currentShape = null;
-  shapeDropped = false;
+  currentCat = null;
+  catDropped = false;
 
-  spawnShape();
+  spawnCat();
 }
 
 function endGame() {
@@ -184,12 +151,12 @@ function endGame() {
   gameOver = true;
 
   setTimeout(() => {
-    alert("A cat shape fell off the table! Press R to restart.");
+    alert("A cat fell off the table! Press R to restart.");
   }, 50);
 }
 
 Events.on(engine, "beforeUpdate", () => {
-  if (!currentShape || shapeDropped || gameOver) return;
+  if (!currentCat || catDropped || gameOver) return;
 
   let dx = 0;
   const speed = 3;
@@ -197,14 +164,14 @@ Events.on(engine, "beforeUpdate", () => {
   if (moveLeft) dx -= speed;
   if (moveRight) dx += speed;
 
-  const nextX = currentShape.position.x + dx;
-  const leftLimit = tableX - 180;
-  const rightLimit = tableX + 180;
+  const nextX = currentCat.position.x + dx;
+  const leftLimit = tableX - 210;
+  const rightLimit = tableX + 210;
 
   if (nextX > leftLimit && nextX < rightLimit) {
-    Body.setPosition(currentShape, {
+    Body.setPosition(currentCat, {
       x: nextX,
-      y: currentShape.position.y
+      y: currentCat.position.y
     });
   }
 });
@@ -215,19 +182,19 @@ Events.on(engine, "afterUpdate", () => {
   const allBodies = Composite.allBodies(world);
 
   for (const body of allBodies) {
-    if (body.label === "stackShape" && !body.isStatic) {
-      if (body.position.y > height + 100) {
-        endGame();
-        break;
-      }
+    if (body.label !== "cat" || body.isStatic) continue;
 
-      if (
-        body.position.y > tableTopY - 10 &&
-        (body.position.x < tableX - 260 || body.position.x > tableX + 260)
-      ) {
-        endGame();
-        break;
-      }
+    if (body.position.y > height + 80) {
+      endGame();
+      break;
+    }
+
+    if (
+      body.position.y > tableY - 30 &&
+      (body.position.x < tableX - 310 || body.position.x > tableX + 310)
+    ) {
+      endGame();
+      break;
     }
   }
 });
@@ -238,27 +205,21 @@ function drawKitchenBackground() {
   Events.on(render, "beforeRender", () => {
     ctx.save();
 
-    // wall
     ctx.fillStyle = "#efe2d0";
     ctx.fillRect(0, 0, width, height);
 
-    // floor
     ctx.fillStyle = "#d8c3a5";
     ctx.fillRect(0, floorTop, width, height - floorTop);
 
-    // window frame
     ctx.fillStyle = "#b58b68";
     ctx.fillRect(60, 130, 150, 170);
 
-    // window glass
     ctx.fillStyle = "#f7f7f7";
     ctx.fillRect(80, 150, 110, 130);
 
-    // fridge
     ctx.fillStyle = "#aeb7c0";
     ctx.fillRect(width - 240, 130, 120, 230);
 
-    // fridge top
     ctx.fillStyle = "#6b7680";
     ctx.fillRect(width - 260, 105, 160, 35);
 
@@ -276,70 +237,68 @@ function drawCatFace(body) {
   ctx.translate(x, y);
   ctx.rotate(angle);
 
-  // ears
   ctx.fillStyle = "#2b2b2b";
+
+  // ears
   ctx.beginPath();
-  ctx.moveTo(-18, -18);
-  ctx.lineTo(-8, -34);
-  ctx.lineTo(0, -18);
+  ctx.moveTo(-22, -18);
+  ctx.lineTo(-12, -34);
+  ctx.lineTo(-4, -18);
   ctx.fill();
 
   ctx.beginPath();
-  ctx.moveTo(0, -18);
-  ctx.lineTo(8, -34);
-  ctx.lineTo(18, -18);
+  ctx.moveTo(4, -18);
+  ctx.lineTo(12, -34);
+  ctx.lineTo(22, -18);
   ctx.fill();
 
   // eyes
-  ctx.fillStyle = "#111";
   ctx.beginPath();
-  ctx.arc(-10, -4, 3, 0, Math.PI * 2);
-  ctx.arc(10, -4, 3, 0, Math.PI * 2);
+  ctx.arc(-12, -2, 3, 0, Math.PI * 2);
+  ctx.arc(12, -2, 3, 0, Math.PI * 2);
   ctx.fill();
 
   // nose
   ctx.fillStyle = "#ffb3c1";
   ctx.beginPath();
-  ctx.moveTo(0, 4);
-  ctx.lineTo(-4, 10);
-  ctx.lineTo(4, 10);
+  ctx.moveTo(0, 6);
+  ctx.lineTo(-4, 11);
+  ctx.lineTo(4, 11);
   ctx.closePath();
   ctx.fill();
 
   // whiskers
   ctx.strokeStyle = "#222";
   ctx.lineWidth = 1.5;
-
   ctx.beginPath();
-  ctx.moveTo(-6, 10);
-  ctx.lineTo(-22, 6);
-  ctx.moveTo(-6, 12);
-  ctx.lineTo(-22, 14);
-  ctx.moveTo(6, 10);
-  ctx.lineTo(22, 6);
-  ctx.moveTo(6, 12);
-  ctx.lineTo(22, 14);
+  ctx.moveTo(-7, 10);
+  ctx.lineTo(-24, 6);
+  ctx.moveTo(-7, 13);
+  ctx.lineTo(-24, 15);
+  ctx.moveTo(7, 10);
+  ctx.lineTo(24, 6);
+  ctx.moveTo(7, 13);
+  ctx.lineTo(24, 15);
   ctx.stroke();
 
   ctx.restore();
 }
 
-function drawFacesOnShapes() {
+function drawOverlayDetails() {
   const ctx = render.context;
 
   Events.on(render, "afterRender", () => {
     const allBodies = Composite.allBodies(world);
 
     for (const body of allBodies) {
-      if (body.label === "stackShape") {
+      if (body.label === "cat") {
         drawCatFace(body);
       }
     }
 
-    // little table edge highlight
     ctx.save();
     ctx.fillStyle = "rgba(255,255,255,0.15)";
-    ctx.fillRect(tableX - tableWidth / 2, tableTopY - 13, tableWidth, 6);
+    ctx.fillRect(tableX - tableWidth / 2, tableY - 13, tableWidth, 6);
     ctx.restore();
   });
 }
@@ -350,7 +309,7 @@ document.addEventListener("keydown", (e) => {
 
   if (e.code === "Space") {
     e.preventDefault();
-    dropCurrentShape();
+    dropCurrentCat();
   }
 
   if (e.key.toLowerCase() === "r") {
@@ -364,5 +323,5 @@ document.addEventListener("keyup", (e) => {
 });
 
 drawKitchenBackground();
-drawFacesOnShapes();
-spawnShape();
+drawOverlayDetails();
+spawnCat();
