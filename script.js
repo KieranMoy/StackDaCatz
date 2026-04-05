@@ -210,24 +210,30 @@ document.addEventListener("keyup", (e) => {
 function drawKitchenDecor() {
   const ctx = render.context;
 
-  Events.on(render, "afterRender", () => {
+  Events.on(render, "beforeRender", () => {
     ctx.save();
 
+    // wall
     ctx.fillStyle = "#efe2d0";
     ctx.fillRect(0, 0, width, height * 0.72);
 
+    // floor
     ctx.fillStyle = "#d8c3a5";
     ctx.fillRect(0, height * 0.72, width, height * 0.28);
 
+    // window frame
     ctx.fillStyle = "#b08968";
     ctx.fillRect(60, 90, 140, 180);
 
+    // window glass
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(78, 110, 104, 140);
 
+    // fridge body
     ctx.fillStyle = "#adb5bd";
     ctx.fillRect(width - 230, 120, 120, 220);
 
+    // fridge top
     ctx.fillStyle = "#6c757d";
     ctx.fillRect(width - 250, 90, 160, 30);
 
