@@ -20,7 +20,7 @@ const render = Render.create({
     width,
     height,
     wireframes: false,
-    background: "transparent"
+    background: "#efe2d0"
   }
 });
 
@@ -78,32 +78,52 @@ function randomShapeColor() {
 }
 
 function createShape(x, y, isStatic = false) {
+  const color = randomShapeColor();
   const type = Math.floor(Math.random() * 3);
-  let body;
 
   if (type === 0) {
-    body = Bodies.rectangle(x, y, 80, 50, {
-      chamfer: { radius: 8 }
+    return Bodies.rectangle(x, y, 80, 50, {
+      isStatic,
+      label: "stackShape",
+      chamfer: { radius: 8 },
+      friction: 1.2,
+      restitution: 0.1,
+      density: 0.0025,
+      render: {
+        fillStyle: color,
+        strokeStyle: "#222",
+        lineWidth: 2
+      }
     });
-  } else if (type === 1) {
-    body = Bodies.polygon(x, y, 3, 40);
-  } else {
-    body = Bodies.polygon(x, y, 6, 35);
   }
 
-  body.label = "stackShape";
+  if (type === 1) {
+    return Bodies.polygon(x, y, 3, 40, {
+      isStatic,
+      label: "stackShape",
+      friction: 1.2,
+      restitution: 0.1,
+      density: 0.0025,
+      render: {
+        fillStyle: color,
+        strokeStyle: "#222",
+        lineWidth: 2
+      }
+    });
+  }
 
-  Body.set(body, {
+  return Bodies.polygon(x, y, 6, 35, {
     isStatic,
+    label: "stackShape",
     friction: 1.2,
     restitution: 0.1,
     density: 0.0025,
     render: {
-      fillStyle: randomShapeColor()
+      fillStyle: color,
+      strokeStyle: "#222",
+      lineWidth: 2
     }
   });
-
-  return body;
 }
 
 function spawnShape() {
@@ -209,30 +229,22 @@ Events.on(engine, "afterUpdate", () => {
 function drawKitchenDecor() {
   const ctx = render.context;
 
-  Events.on(render, "beforeRender", () => {
+  Events.on(render, "afterRender", () => {
     ctx.save();
 
-    // wall
-    ctx.fillStyle = "#efe2d0";
-    ctx.fillRect(0, 0, width, height * 0.72);
-
-    // floor
+    // floor strip
     ctx.fillStyle = "#d8c3a5";
     ctx.fillRect(0, height * 0.72, width, height * 0.28);
 
-    // window frame
+    // window
     ctx.fillStyle = "#b08968";
     ctx.fillRect(60, 90, 140, 180);
-
-    // window glass
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(78, 110, 104, 140);
 
-    // fridge body
+    // fridge
     ctx.fillStyle = "#adb5bd";
     ctx.fillRect(width - 230, 120, 120, 220);
-
-    // fridge top
     ctx.fillStyle = "#6c757d";
     ctx.fillRect(width - 250, 90, 160, 30);
 
@@ -241,13 +253,8 @@ function drawKitchenDecor() {
 }
 
 document.addEventListener("keydown", (e) => {
-  if (e.code === "ArrowLeft") {
-    moveLeft = true;
-  }
-
-  if (e.code === "ArrowRight") {
-    moveRight = true;
-  }
+  if (e.code === "ArrowLeft") moveLeft = true;
+  if (e.code === "ArrowRight") moveRight = true;
 
   if (e.code === "Space") {
     e.preventDefault();
@@ -260,13 +267,8 @@ document.addEventListener("keydown", (e) => {
 });
 
 document.addEventListener("keyup", (e) => {
-  if (e.code === "ArrowLeft") {
-    moveLeft = false;
-  }
-
-  if (e.code === "ArrowRight") {
-    moveRight = false;
-  }
+  if (e.code === "ArrowLeft") moveLeft = false;
+  if (e.code === "ArrowRight") moveRight = false;
 });
 
 drawKitchenDecor();
