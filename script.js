@@ -1,12 +1,4 @@
-const {
-  Engine,
-  Render,
-  Runner,
-  World,
-  Bodies,
-  Body,
-  Events
-} = Matter;
+const { Engine, Render, Runner, World, Bodies, Body, Events, Composite } = Matter;
 
 const canvas = document.getElementById("game");
 const scoreEl = document.getElementById("score");
@@ -19,7 +11,7 @@ canvas.height = height;
 
 const engine = Engine.create();
 const world = engine.world;
-world.gravity.y = 0.9;
+world.gravity.y = 1.4;
 
 const render = Render.create({
   canvas,
@@ -28,100 +20,122 @@ const render = Render.create({
     width,
     height,
     wireframes: false,
-    background: "#f7efe5"
+    background: "transparent"
   }
 });
 
 Render.run(render);
-Runner.run(Runner.create(), engine);
+const runner = Runner.create();
+Runner.run(runner, engine);
 
 let score = 0;
 let gameOver = false;
-let currentCat = null;
-let catDropped = false;
-
+let currentShape = null;
+let shapeDropped = false;
 let moveLeft = false;
 let moveRight = false;
 
-const walls = [
-  Bodies.rectangle(width / 2, height + 30, width, 60, {
-    isStatic: true,
-    render: { fillStyle: "#d9c2a3" }
-  }),
-  Bodies.rectangle(-30, height / 2, 60, height, {
-    isStatic: true,
-    render: { visible: false }
-  }),
-  Bodies.rectangle(width + 30, height / 2, 60, height, {
-    isStatic: true,
-    render: { visible: false }
-  })
-];
+const tableX = width / 2;
+const tableY = height - 120;
+const tableWidth = 420;
 
-const table = Bodies.rectangle(width / 2, height - 120, 420, 24, {
+const ground = Bodies.rectangle(width / 2, height + 30, width, 60, {
+  isStatic: true,
+  render: { visible: false }
+});
+
+const leftWall = Bodies.rectangle(-30, height / 2, 60, height, {
+  isStatic: true,
+  render: { visible: false }
+});
+
+const rightWall = Bodies.rectangle(width + 30, height / 2, 60, height, {
+  isStatic: true,
+  render: { visible: false }
+});
+
+const table = Bodies.rectangle(tableX, tableY, tableWidth, 24, {
   isStatic: true,
   label: "table",
-  render: { fillStyle: "#8b5e3c" }
+  render: { fillStyle: "#5a3825" }
 });
 
-const tableLegLeft = Bodies.rectangle(width / 2 - 170, height - 45, 24, 140, {
+const tableLegLeft = Bodies.rectangle(tableX - 170, height - 45, 24, 140, {
   isStatic: true,
   render: { fillStyle: "#6f4a2d" }
 });
 
-const tableLegRight = Bodies.rectangle(width / 2 + 170, height - 45, 24, 140, {
+const tableLegRight = Bodies.rectangle(tableX + 170, height - 45, 24, 140, {
   isStatic: true,
   render: { fillStyle: "#6f4a2d" }
 });
 
-World.add(world, [...walls, table, tableLegLeft, tableLegRight]);
+World.add(world, [ground, leftWall, rightWall, table, tableLegLeft, tableLegRight]);
 
-function randomCatColor() {
-  const colors = ["#f4a261", "#e76f51", "#f6bd60", "#84a59d", "#cdb4db"];
+function randomShapeColor() {
+  const colors = ["#ff7b00", "#ff3d00", "#ffbe0b", "#3a86ff", "#8338ec"];
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
-function createCat(x, y, isStatic = false) {
-  const cat = Bodies.rectangle(x, y, 70, 42, {
+function createShape(x, y, isStatic = false) {
+  const type = Math.floor(Math.random() * 3);
+  let body;
+
+  if (type === 0) {
+    body = Bodies.rectangle(x, y, 80, 50, {
+      chamfer: { radius: 8 }
+    });
+  } else if (type === 1) {
+    body = Bodies.polygon(x, y, 3, 40);
+  } else {
+    body = Bodies.polygon(x, y, 6, 35);
+  }
+
+  body.label = "stackShape";
+
+  Body.set(body, {
     isStatic,
-    chamfer: { radius: 12 },
-    friction: 0.7,
-    restitution: 0.05,
+    friction: 1.2,
+    restitution: 0.1,
     density: 0.0025,
-    label: "cat",
     render: {
-      fillStyle: randomCatColor()
+      fillStyle: randomShapeColor()
     }
   });
 
-  return cat;
+  return body;
 }
 
-function spawnCat() {
+function spawnShape() {
   if (gameOver) return;
 
-  currentCat = createCat(width / 2, 110, true);
-  catDropped = false;
-  World.add(world, currentCat);
+  currentShape = createShape(tableX, 110, true);
+  shapeDropped = false;
+  World.add(world, currentShape);
 }
 
-function dropCurrentCat() {
-  if (!currentCat || catDropped || gameOver) return;
+function dropCurrentShape() {
+  if (!currentShape || shapeDropped || gameOver) return;
 
-  Body.setStatic(currentCat, false);
-  catDropped = true;
+  Body.setStatic(currentShape, false);
+  Body.setAngle(currentShape, (Math.random() - 0.5) * 0.4);
+
+  shapeDropped = true;
   score += 1;
   scoreEl.textContent = score;
 
   setTimeout(() => {
-    if (!gameOver) spawnCat();
+    if (!gameOver) {
+      spawnShape();
+    }
   }, 900);
 }
 
 function restartGame() {
-  const allBodies = Matter.Composite.allBodies(world);
+  const allBodies = Composite.allBodies(world);
+
   for (const body of allBodies) {
-    if (body.label === "cat") {
+    if (body.label === "stackShape") {
       World.remove(world, body);
     }
   }
@@ -129,35 +143,38 @@ function restartGame() {
   score = 0;
   scoreEl.textContent = score;
   gameOver = false;
-  currentCat = null;
-  catDropped = false;
+  currentShape = null;
+  shapeDropped = false;
 
-  spawnCat();
+  spawnShape();
 }
 
 function endGame() {
   if (gameOver) return;
   gameOver = true;
-  alert("A cat fell! Game over. Press R to restart.");
+
+  setTimeout(() => {
+    alert("A shape fell off the table! Press R to restart.");
+  }, 50);
 }
 
 Events.on(engine, "beforeUpdate", () => {
-  if (!currentCat || catDropped || gameOver) return;
+  if (!currentShape || shapeDropped || gameOver) return;
 
   let dx = 0;
-  const speed = 4;
+  const speed = 2.5;
 
   if (moveLeft) dx -= speed;
   if (moveRight) dx += speed;
 
-  const nextX = currentCat.position.x + dx;
-  const leftLimit = width / 2 - 200;
-  const rightLimit = width / 2 + 200;
+  const nextX = currentShape.position.x + dx;
+  const leftLimit = tableX - 200;
+  const rightLimit = tableX + 200;
 
   if (nextX > leftLimit && nextX < rightLimit) {
-    Body.setPosition(currentCat, {
+    Body.setPosition(currentShape, {
       x: nextX,
-      y: currentCat.position.y
+      y: currentShape.position.y
     });
   }
 });
@@ -165,46 +182,28 @@ Events.on(engine, "beforeUpdate", () => {
 Events.on(engine, "afterUpdate", () => {
   if (gameOver) return;
 
-  const allBodies = Matter.Composite.allBodies(world);
+  const allBodies = Composite.allBodies(world);
+
   for (const body of allBodies) {
-    if (body.label === "cat" && !body.isStatic) {
+    if (body.label === "stackShape" && !body.isStatic) {
       if (body.position.y > height + 80) {
         endGame();
         break;
       }
 
-      if (body.position.x < width / 2 - 260 || body.position.x > width / 2 + 260) {
+      if (body.position.x < tableX - 260 || body.position.x > tableX + 260) {
         if (body.position.y > height - 180) {
           endGame();
           break;
         }
       }
 
-      if (Math.abs(body.angle) > 1.6 && body.position.y > height - 250) {
+      if (Math.abs(body.angle) > 1.8 && body.position.y > height - 220) {
         endGame();
         break;
       }
     }
   }
-});
-
-document.addEventListener("keydown", (e) => {
-  if (e.code === "ArrowLeft") moveLeft = true;
-  if (e.code === "ArrowRight") moveRight = true;
-
-  if (e.code === "Space") {
-    e.preventDefault();
-    dropCurrentCat();
-  }
-
-  if (e.key.toLowerCase() === "r") {
-    restartGame();
-  }
-});
-
-document.addEventListener("keyup", (e) => {
-  if (e.code === "ArrowLeft") moveLeft = false;
-  if (e.code === "ArrowRight") moveRight = false;
 });
 
 function drawKitchenDecor() {
@@ -241,5 +240,34 @@ function drawKitchenDecor() {
   });
 }
 
+document.addEventListener("keydown", (e) => {
+  if (e.code === "ArrowLeft") {
+    moveLeft = true;
+  }
+
+  if (e.code === "ArrowRight") {
+    moveRight = true;
+  }
+
+  if (e.code === "Space") {
+    e.preventDefault();
+    dropCurrentShape();
+  }
+
+  if (e.key.toLowerCase() === "r") {
+    restartGame();
+  }
+});
+
+document.addEventListener("keyup", (e) => {
+  if (e.code === "ArrowLeft") {
+    moveLeft = false;
+  }
+
+  if (e.code === "ArrowRight") {
+    moveRight = false;
+  }
+});
+
 drawKitchenDecor();
-spawnCat();
+spawnShape();
