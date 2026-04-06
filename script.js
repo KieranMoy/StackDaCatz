@@ -1,4 +1,4 @@
-const { Engine, World, Bodies, Body, Runner, Composite } = Matter;
+const { Engine, World, Bodies, Body, Runner, Composite, Sleeping } = Matter;
 
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
@@ -11,6 +11,7 @@ canvas.width = width;
 canvas.height = height;
 
 const engine = Engine.create();
+engine.enableSleeping = true;
 const world = engine.world;
 world.gravity.y = 1.0;
 
@@ -25,7 +26,6 @@ let moveRight = false;
 
 let currentCat = null;
 let catDropped = false;
-let settleFrames = 0;
 
 const catBodies = [];
 
@@ -43,20 +43,10 @@ const ground = Bodies.rectangle(width / 2, height + 40, width, 80, {
   label: "ground"
 });
 
-const leftWall = Bodies.rectangle(-40, height / 2, 80, height * 2, {
-  isStatic: true,
-  label: "wall"
-});
-
-const rightWall = Bodies.rectangle(width + 40, height / 2, 80, height * 2, {
-  isStatic: true,
-  label: "wall"
-});
-
 const tableBody = Bodies.rectangle(table.x, table.y, table.width, table.height, {
   isStatic: true,
   label: "table",
-  friction: 0.9
+  friction: 0.6
 });
 
 const legLeft = Bodies.rectangle(table.x - 170, table.y + 80, 28, 160, {
@@ -69,7 +59,7 @@ const legRight = Bodies.rectangle(table.x + 170, table.y + 80, 28, 160, {
   label: "tableLeg"
 });
 
-World.add(world, [ground, leftWall, rightWall, tableBody, legLeft, legRight]);
+World.add(world, [ground, tableBody, legLeft, legRight]);
 
 function randomCatColor() {
   const colors = ["#ff9f1c", "#ff595e", "#8ac926", "#1982c4", "#6a4c93"];
@@ -81,10 +71,10 @@ function createCatBody(x, y, isStatic = false) {
     isStatic,
     label: "cat",
     chamfer: { radius: 18 },
-    friction: 0.9,
-    frictionStatic: 1.0,
-    restitution: 0.05,
-    density: 0.0025
+    friction: 0.6,
+    frictionStatic: 0.8,
+    restitution: 0.1,
+    density: 0.005
   });
 
   cat.renderColor = randomCatColor();
@@ -96,7 +86,6 @@ function spawnCat() {
 
   currentCat = createCatBody(table.x, 90, true);
   catDropped = false;
-  settleFrames = 0;
   World.add(world, currentCat);
 }
 
@@ -104,8 +93,6 @@ function dropCat() {
   if (!currentCat || catDropped || gameOver) return;
 
   Body.setStatic(currentCat, false);
-  Body.setVelocity(currentCat, { x: 0, y: 0.5 });
-
   catDropped = true;
   score += 1;
   scoreEl.textContent = score;
@@ -119,7 +106,6 @@ function resetGame() {
   catBodies.length = 0;
   currentCat = null;
   catDropped = false;
-  settleFrames = 0;
   gameOver = false;
   score = 0;
   scoreEl.textContent = score;
@@ -156,30 +142,18 @@ function updateGameLogic() {
     });
   }
 
-  if (currentCat && catDropped) {
-    const speed = currentCat.speed;
-    const angularSpeed = Math.abs(currentCat.angularSpeed);
+  if (currentCat && catDropped && Sleeping(currentCat)) {
+    catBodies.push(currentCat);
+    currentCat = null;
+    catDropped = false;
 
-    if (speed < 0.15 && angularSpeed < 0.02 && currentCat.position.y < height - 20) {
-      settleFrames++;
-    } else {
-      settleFrames = 0;
+    const highestCatY = Math.min(...catBodies.map(c => c.position.y));
+    if (highestCatY < 100) {
+      endGame();
+      return;
     }
 
-    if (settleFrames > 30) {
-      catBodies.push(currentCat);
-      currentCat = null;
-      catDropped = false;
-      settleFrames = 0;
-
-      const highestCatY = Math.min(...catBodies.map(c => c.position.y));
-      if (highestCatY < 100) {
-        endGame();
-        return;
-      }
-
-      spawnCat();
-    }
+    spawnCat();
   }
 
   for (const cat of [...catBodies, currentCat].filter(Boolean)) {
