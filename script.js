@@ -5,11 +5,13 @@
 const { Engine, Render, Runner, Bodies, Body, World, Events, Mouse } = Matter;
 
 // ── Canvas sizing ──────────────────────────────────────────────────────────
-const UI_HEIGHT = document.getElementById('ui').getBoundingClientRect().height + 8;
+const canvas = document.getElementById('game');
+
+// Size canvas BEFORE reading any layout values so getBoundingClientRect is accurate
+const UI_HEIGHT = document.getElementById('ui').offsetHeight + 8;
 const CANVAS_W = Math.min(600, window.innerWidth);
 const CANVAS_H = Math.min(window.innerHeight - UI_HEIGHT - 10, 560);
 
-const canvas = document.getElementById('game');
 canvas.width  = CANVAS_W;
 canvas.height = CANVAS_H;
 const ctx = canvas.getContext('2d');
@@ -40,7 +42,7 @@ const FALL_BOUNDARY= CANVAS_H + 120;
 const WALL_THICK   = 40;
 
 // ── State ──────────────────────────────────────────────────────────────────
-let engine, world, runner;
+let engine, world;
 let bodies   = [];   // { body, color, settled }
 let pending  = null; // the cat being aimed
 let score    = 0;
@@ -54,25 +56,28 @@ let pendingDir = 1;
 function initPhysics() {
   engine = Engine.create({ gravity: { x: 0, y: 2.2 } });
   world  = engine.world;
-  runner = Runner.create();
 
-  // Table surface (static)
+  World.add(world, makeStaticBodies());
+}
+
+function makeStaticBodies() {
+  // Table top surface: center Y is the TOP edge of the table + half its thickness.
+  // TABLE_Y is the pixel Y of the table's top surface, so physics center = TABLE_Y + TABLE_H/2.
   const table = Bodies.rectangle(TABLE_X, TABLE_Y + TABLE_H / 2, TABLE_W, TABLE_H, {
     isStatic: true,
     label: 'table',
-    friction: 0.9,
-    restitution: 0.1,
-    render: { fillStyle: '#795548' },
+    friction: 0.85,
+    restitution: 0.05,
+    collisionFilter: { category: 0x0001 },
   });
 
-  // Invisible floor (catches falls)
-  const floor = Bodies.rectangle(CANVAS_W / 2, CANVAS_H + WALL_THICK / 2, CANVAS_W * 3, WALL_THICK, {
+  // Solid floor well below canvas — NOT a sensor, so nothing passes through.
+  const floor = Bodies.rectangle(CANVAS_W / 2, CANVAS_H + WALL_THICK, CANVAS_W * 4, WALL_THICK * 2, {
     isStatic: true,
     label: 'floor',
-    isSensor: true,
   });
 
-  World.add(world, [table, floor]);
+  return [table, floor];
 }
 
 // ── Cat drawing ────────────────────────────────────────────────────────────
@@ -364,7 +369,6 @@ function triggerGameOver() {
 
 // ── Restart ────────────────────────────────────────────────────────────────
 function restart() {
-  // Clear physics world
   World.clear(world);
   Engine.clear(engine);
   bodies = [];
@@ -374,15 +378,7 @@ function restart() {
   document.getElementById('score').textContent = '0';
   document.getElementById('overlay').classList.add('hidden');
 
-  // Re-add static bodies
-  const table = Bodies.rectangle(TABLE_X, TABLE_Y + TABLE_H / 2, TABLE_W, TABLE_H, {
-    isStatic: true, label: 'table', friction: 0.9, restitution: 0.1,
-  });
-  const floor = Bodies.rectangle(CANVAS_W / 2, CANVAS_H + WALL_THICK / 2, CANVAS_W * 3, WALL_THICK, {
-    isStatic: true, label: 'floor', isSensor: true,
-  });
-  World.add(world, [table, floor]);
-
+  World.add(world, makeStaticBodies());
   spawnPending();
 }
 
