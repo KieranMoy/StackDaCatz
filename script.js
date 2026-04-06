@@ -13,7 +13,7 @@ canvas.height = height;
 const engine = Engine.create();
 engine.enableSleeping = true;
 const world = engine.world;
-world.gravity.y = 1.0;
+world.gravity.y = 1.5;
 
 const runner = Runner.create();
 Runner.run(runner, engine);
@@ -46,7 +46,7 @@ const ground = Bodies.rectangle(width / 2, height + 40, width, 80, {
 const tableBody = Bodies.rectangle(table.x, table.y, table.width, table.height, {
   isStatic: true,
   label: "table",
-  friction: 0.6
+  friction: 0.3
 });
 
 const legLeft = Bodies.rectangle(table.x - 170, table.y + 80, 28, 160, {
@@ -74,7 +74,7 @@ function createCatBody(x, y, isStatic = false) {
     friction: 0.6,
     frictionStatic: 0.8,
     restitution: 0.1,
-    density: 0.005
+    density: 0.01
   });
 
   cat.renderColor = randomCatColor();
@@ -93,6 +93,7 @@ function dropCat() {
   if (!currentCat || catDropped || gameOver) return;
 
   Body.setStatic(currentCat, false);
+  Body.setVelocity(currentCat, { x: 0, y: 0.5 });
   catDropped = true;
   score += 1;
   scoreEl.textContent = score;
