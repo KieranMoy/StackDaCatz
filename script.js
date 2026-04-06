@@ -1,172 +1,179 @@
+const { Engine, World, Bodies, Body, Runner, Composite } = Matter;
+
 const canvas = document.getElementById("game");
 const ctx = canvas.getContext("2d");
 const scoreEl = document.getElementById("score");
 
-const width = window.innerWidth;
-const height = window.innerHeight;
+let width = window.innerWidth;
+let height = window.innerHeight;
 
 canvas.width = width;
 canvas.height = height;
 
+const engine = Engine.create();
+const world = engine.world;
+world.gravity.y = 1.0;
+
+const runner = Runner.create();
+Runner.run(runner, engine);
+
 let score = 0;
 let gameOver = false;
 
+let moveLeft = false;
+let moveRight = false;
+
+let currentCat = null;
+let catDropped = false;
+let settleFrames = 0;
+
+const catBodies = [];
+
 const floorTop = height - 110;
+
 const table = {
-  x: width / 2 - 250,
+  x: width / 2,
   y: height - 170,
   width: 500,
   height: 24
 };
 
-const catWidth = 88;
-const catHeight = 58;
-const moveSpeed = 4;
-const fallSpeed = 6;
+const ground = Bodies.rectangle(width / 2, height + 40, width, 80, {
+  isStatic: true,
+  label: "ground"
+});
 
-let moveLeft = false;
-let moveRight = false;
+const leftWall = Bodies.rectangle(-40, height / 2, 80, height * 2, {
+  isStatic: true,
+  label: "wall"
+});
 
-let stackedCats = [];
-let currentCat = null;
+const rightWall = Bodies.rectangle(width + 40, height / 2, 80, height * 2, {
+  isStatic: true,
+  label: "wall"
+});
+
+const tableBody = Bodies.rectangle(table.x, table.y, table.width, table.height, {
+  isStatic: true,
+  label: "table",
+  friction: 0.9
+});
+
+const legLeft = Bodies.rectangle(table.x - 170, table.y + 80, 28, 160, {
+  isStatic: true,
+  label: "tableLeg"
+});
+
+const legRight = Bodies.rectangle(table.x + 170, table.y + 80, 28, 160, {
+  isStatic: true,
+  label: "tableLeg"
+});
+
+World.add(world, [ground, leftWall, rightWall, tableBody, legLeft, legRight]);
 
 function randomCatColor() {
   const colors = ["#ff9f1c", "#ff595e", "#8ac926", "#1982c4", "#6a4c93"];
   return colors[Math.floor(Math.random() * colors.length)];
 }
 
+function createCatBody(x, y, isStatic = false) {
+  const cat = Bodies.rectangle(x, y, 88, 58, {
+    isStatic,
+    label: "cat",
+    chamfer: { radius: 18 },
+    friction: 0.9,
+    frictionStatic: 1.0,
+    restitution: 0.05,
+    density: 0.0025
+  });
+
+  cat.renderColor = randomCatColor();
+  return cat;
+}
+
 function spawnCat() {
-  currentCat = {
-    x: width / 2 - catWidth / 2,
-    y: 70,
-    width: catWidth,
-    height: catHeight,
-    color: randomCatColor(),
-    falling: false
-  };
-}
+  if (gameOver) return;
 
-function resetGame() {
-  score = 0;
-  scoreEl.textContent = score;
-  gameOver = false;
-  stackedCats = [];
-  spawnCat();
-}
-
-function rectsOverlap(a, b) {
-  return (
-    a.x < b.x + b.width &&
-    a.x + a.width > b.x &&
-    a.y < b.y + b.height &&
-    a.y + a.height > b.y
-  );
-}
-
-function getLandingY(cat) {
-  let landingY = table.y - cat.height;
-
-  // only allow support from cats that overlap horizontally
-  for (const other of stackedCats) {
-    const horizontalOverlap =
-      cat.x < other.x + other.width &&
-      cat.x + cat.width > other.x;
-
-    if (!horizontalOverlap) continue;
-
-    const candidateY = other.y - cat.height;
-
-    if (candidateY < landingY && other.y >= 0) {
-      landingY = candidateY;
-    }
-  }
-
-  return landingY;
-}
-
-function isSupported(cat) {
-  // supported by table
-  const onTable =
-    cat.y + cat.height === table.y &&
-    cat.x + cat.width > table.x &&
-    cat.x < table.x + table.width;
-
-  if (onTable) return true;
-
-  // supported by another cat
-  for (const other of stackedCats) {
-    if (other === cat) continue;
-
-    const touchingTop = cat.y + cat.height === other.y;
-    const horizontalOverlap =
-      cat.x + cat.width > other.x &&
-      cat.x < other.x + other.width;
-
-    if (touchingTop && horizontalOverlap) {
-      return true;
-    }
-  }
-
-  return false;
+  currentCat = createCatBody(table.x, 90, true);
+  catDropped = false;
+  settleFrames = 0;
+  World.add(world, currentCat);
 }
 
 function dropCat() {
-  if (!currentCat || currentCat.falling || gameOver) return;
-  currentCat.falling = true;
+  if (!currentCat || catDropped || gameOver) return;
+
+  Body.setStatic(currentCat, false);
+  Body.setVelocity(currentCat, { x: 0, y: 0.5 });
+
+  catDropped = true;
+  score += 1;
+  scoreEl.textContent = score;
+}
+
+function resetGame() {
+  for (const body of [...catBodies, currentCat].filter(Boolean)) {
+    World.remove(world, body);
+  }
+
+  catBodies.length = 0;
+  currentCat = null;
+  catDropped = false;
+  settleFrames = 0;
+  gameOver = false;
+  score = 0;
+  scoreEl.textContent = score;
+
+  spawnCat();
 }
 
 function endGame() {
+  if (gameOver) return;
   gameOver = true;
+
   setTimeout(() => {
     alert("A cat fell off the table! Press R to restart.");
   }, 50);
 }
 
-function update() {
+function updateGameLogic() {
   if (gameOver) return;
 
-  if (currentCat && !currentCat.falling) {
-    if (moveLeft) currentCat.x -= moveSpeed;
-    if (moveRight) currentCat.x += moveSpeed;
+  if (currentCat && !catDropped) {
+    const speed = 3;
+    let dx = 0;
 
-    const minX = table.x - 120;
-    const maxX = table.x + table.width - catWidth + 120;
+    if (moveLeft) dx -= speed;
+    if (moveRight) dx += speed;
 
-    if (currentCat.x < minX) currentCat.x = minX;
-    if (currentCat.x > maxX) currentCat.x = maxX;
+    const nextX = currentCat.position.x + dx;
+    const minX = table.x - 220;
+    const maxX = table.x + 220;
+
+    Body.setPosition(currentCat, {
+      x: Math.max(minX, Math.min(maxX, nextX)),
+      y: currentCat.position.y
+    });
   }
 
-  if (currentCat && currentCat.falling) {
-    const targetY = getLandingY(currentCat);
+  if (currentCat && catDropped) {
+    const speed = currentCat.speed;
+    const angularSpeed = Math.abs(currentCat.angularSpeed);
 
-    if (currentCat.y + fallSpeed < targetY) {
-      currentCat.y += fallSpeed;
+    if (speed < 0.15 && angularSpeed < 0.02 && currentCat.position.y < height - 20) {
+      settleFrames++;
     } else {
-      currentCat.y = targetY;
+      settleFrames = 0;
+    }
 
-      const landedOnTable =
-        currentCat.x + currentCat.width > table.x &&
-        currentCat.x < table.x + table.width;
+    if (settleFrames > 30) {
+      catBodies.push(currentCat);
+      currentCat = null;
+      catDropped = false;
+      settleFrames = 0;
 
-      const landedOnStack = stackedCats.some(other => {
-        const touchingTop = currentCat.y + currentCat.height === other.y;
-        const horizontalOverlap =
-          currentCat.x + currentCat.width > other.x &&
-          currentCat.x < other.x + other.width;
-        return touchingTop && horizontalOverlap;
-      });
-
-      if (!landedOnTable && !landedOnStack) {
-        endGame();
-        return;
-      }
-
-      stackedCats.push({ ...currentCat });
-      score += 1;
-      scoreEl.textContent = score;
-
-      // lose if stack reaches too high
-      if (currentCat.y < 80) {
+      const highestCatY = Math.min(...catBodies.map(c => c.position.y));
+      if (highestCatY < 100) {
         endGame();
         return;
       }
@@ -174,102 +181,53 @@ function update() {
       spawnCat();
     }
   }
+
+  for (const cat of [...catBodies, currentCat].filter(Boolean)) {
+    if (cat.position.y > height + 120) {
+      endGame();
+      return;
+    }
+
+    if (cat.position.x < -120 || cat.position.x > width + 120) {
+      endGame();
+      return;
+    }
+  }
 }
 
 function drawKitchen() {
-  // wall
   ctx.fillStyle = "#efe2d0";
   ctx.fillRect(0, 0, width, height);
 
-  // floor
   ctx.fillStyle = "#d8c3a5";
   ctx.fillRect(0, floorTop, width, height - floorTop);
 
-  // window frame
   ctx.fillStyle = "#b58b68";
   ctx.fillRect(60, 130, 150, 170);
 
-  // window glass
   ctx.fillStyle = "#f7f7f7";
   ctx.fillRect(80, 150, 110, 130);
 
-  // fridge
   ctx.fillStyle = "#aeb7c0";
   ctx.fillRect(width - 240, 130, 120, 230);
 
-  // fridge top
   ctx.fillStyle = "#6b7680";
   ctx.fillRect(width - 260, 105, 160, 35);
 }
 
 function drawTable() {
   ctx.fillStyle = "#7a4e2d";
-  ctx.fillRect(table.x, table.y, table.width, table.height);
+  ctx.fillRect(table.x - table.width / 2, table.y - table.height / 2, table.width, table.height);
 
   ctx.fillStyle = "#6a4125";
-  ctx.fillRect(table.x + 45, table.y + table.height, 28, 160);
-  ctx.fillRect(table.x + table.width - 73, table.y + table.height, 28, 160);
+  ctx.fillRect(table.x - 170 - 14, table.y + 12, 28, 160);
+  ctx.fillRect(table.x + 170 - 14, table.y + 12, 28, 160);
 
-  ctx.fillStyle = "rgba(255,255,255,0.15)";
-  ctx.fillRect(table.x, table.y, table.width, 5);
+  ctx.fillStyle = "rgba(255,255,255,0.16)";
+  ctx.fillRect(table.x - table.width / 2, table.y - table.height / 2, table.width, 5);
 }
 
-function drawCat(cat) {
-  ctx.fillStyle = cat.color;
-  ctx.strokeStyle = "#2b2b2b";
-  ctx.lineWidth = 2;
-
-  // body
-  roundRect(ctx, cat.x, cat.y, cat.width, cat.height, 18);
-  ctx.fill();
-  ctx.stroke();
-
-  // ears
-  ctx.fillStyle = "#2b2b2b";
-  ctx.beginPath();
-  ctx.moveTo(cat.x + 18, cat.y + 10);
-  ctx.lineTo(cat.x + 28, cat.y - 8);
-  ctx.lineTo(cat.x + 36, cat.y + 10);
-  ctx.fill();
-
-  ctx.beginPath();
-  ctx.moveTo(cat.x + cat.width - 36, cat.y + 10);
-  ctx.lineTo(cat.x + cat.width - 28, cat.y - 8);
-  ctx.lineTo(cat.x + cat.width - 18, cat.y + 10);
-  ctx.fill();
-
-  // eyes
-  ctx.beginPath();
-  ctx.arc(cat.x + 28, cat.y + 24, 3, 0, Math.PI * 2);
-  ctx.arc(cat.x + 60, cat.y + 24, 3, 0, Math.PI * 2);
-  ctx.fill();
-
-  // nose
-  ctx.fillStyle = "#ffb3c1";
-  ctx.beginPath();
-  ctx.moveTo(cat.x + 44, cat.y + 31);
-  ctx.lineTo(cat.x + 40, cat.y + 37);
-  ctx.lineTo(cat.x + 48, cat.y + 37);
-  ctx.closePath();
-  ctx.fill();
-
-  // whiskers
-  ctx.strokeStyle = "#222";
-  ctx.lineWidth = 1.5;
-  ctx.beginPath();
-  ctx.moveTo(cat.x + 38, cat.y + 36);
-  ctx.lineTo(cat.x + 18, cat.y + 32);
-  ctx.moveTo(cat.x + 38, cat.y + 39);
-  ctx.lineTo(cat.x + 18, cat.y + 41);
-
-  ctx.moveTo(cat.x + 50, cat.y + 36);
-  ctx.lineTo(cat.x + 70, cat.y + 32);
-  ctx.moveTo(cat.x + 50, cat.y + 39);
-  ctx.lineTo(cat.x + 70, cat.y + 41);
-  ctx.stroke();
-}
-
-function roundRect(ctx, x, y, width, height, radius) {
+function roundRectPath(ctx, x, y, width, height, radius) {
   ctx.beginPath();
   ctx.moveTo(x + radius, y);
   ctx.lineTo(x + width - radius, y);
@@ -283,13 +241,79 @@ function roundRect(ctx, x, y, width, height, radius) {
   ctx.closePath();
 }
 
-function draw() {
+function drawCat(cat) {
+  const x = cat.position.x;
+  const y = cat.position.y;
+  const angle = cat.angle;
+  const w = 88;
+  const h = 58;
+
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(angle);
+
+  ctx.fillStyle = cat.renderColor;
+  ctx.strokeStyle = "#2b2b2b";
+  ctx.lineWidth = 2;
+
+  roundRectPath(ctx, -w / 2, -h / 2, w, h, 18);
+  ctx.fill();
+  ctx.stroke();
+
+  ctx.fillStyle = "#2b2b2b";
+
+  // ears
+  ctx.beginPath();
+  ctx.moveTo(-26, -18);
+  ctx.lineTo(-16, -34);
+  ctx.lineTo(-8, -18);
+  ctx.fill();
+
+  ctx.beginPath();
+  ctx.moveTo(8, -18);
+  ctx.lineTo(16, -34);
+  ctx.lineTo(26, -18);
+  ctx.fill();
+
+  // eyes
+  ctx.beginPath();
+  ctx.arc(-14, -4, 3, 0, Math.PI * 2);
+  ctx.arc(14, -4, 3, 0, Math.PI * 2);
+  ctx.fill();
+
+  // nose
+  ctx.fillStyle = "#ffb3c1";
+  ctx.beginPath();
+  ctx.moveTo(0, 5);
+  ctx.lineTo(-4, 11);
+  ctx.lineTo(4, 11);
+  ctx.closePath();
+  ctx.fill();
+
+  // whiskers
+  ctx.strokeStyle = "#222";
+  ctx.lineWidth = 1.5;
+  ctx.beginPath();
+  ctx.moveTo(-6, 10);
+  ctx.lineTo(-24, 6);
+  ctx.moveTo(-6, 13);
+  ctx.lineTo(-24, 15);
+  ctx.moveTo(6, 10);
+  ctx.lineTo(24, 6);
+  ctx.moveTo(6, 13);
+  ctx.lineTo(24, 15);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawAll() {
   ctx.clearRect(0, 0, width, height);
 
   drawKitchen();
   drawTable();
 
-  for (const cat of stackedCats) {
+  for (const cat of catBodies) {
     drawCat(cat);
   }
 
@@ -299,8 +323,8 @@ function draw() {
 }
 
 function gameLoop() {
-  update();
-  draw();
+  updateGameLogic();
+  drawAll();
   requestAnimationFrame(gameLoop);
 }
 
@@ -321,6 +345,13 @@ document.addEventListener("keydown", (e) => {
 document.addEventListener("keyup", (e) => {
   if (e.code === "ArrowLeft") moveLeft = false;
   if (e.code === "ArrowRight") moveRight = false;
+});
+
+window.addEventListener("resize", () => {
+  width = window.innerWidth;
+  height = window.innerHeight;
+  canvas.width = width;
+  canvas.height = height;
 });
 
 resetGame();
