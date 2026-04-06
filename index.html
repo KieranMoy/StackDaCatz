@@ -3,17 +3,38 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Cat Stacker</title>
+  <title>Stack Da Catz 🐱</title>
   <link rel="stylesheet" href="style.css" />
+  <link href="https://fonts.googleapis.com/css2?family=Fredoka+One&family=Nunito:wght@400;600;800&display=swap" rel="stylesheet" />
 </head>
 <body>
-  <div class="ui">
-    <h1>Cat Stacker</h1>
-    <p>Move with ← and →, drop with Space, restart with R.</p>
-    <p>Score: <span id="score">0</span></p>
+  <div id="ui">
+    <div id="header">
+      <h1>Stack Da Catz 🐱</h1>
+      <div id="stats">
+        <div class="stat-box">
+          <span class="stat-label">Score</span>
+          <span class="stat-value" id="score">0</span>
+        </div>
+        <div class="stat-box">
+          <span class="stat-label">Best</span>
+          <span class="stat-value" id="best">0</span>
+        </div>
+      </div>
+    </div>
+    <div id="controls-hint">← → to aim &nbsp;|&nbsp; SPACE to drop &nbsp;|&nbsp; R to restart</div>
   </div>
 
   <canvas id="game"></canvas>
+
+  <div id="overlay" class="hidden">
+    <div id="overlay-box">
+      <div id="overlay-emoji">😿</div>
+      <h2 id="overlay-title">A kitty fell off!</h2>
+      <p id="overlay-msg">You stacked <span id="final-score">0</span> cats!</p>
+      <button id="restart-btn">Play Again 🐾</button>
+    </div>
+  </div>
 
   <script src="https://cdnjs.cloudflare.com/ajax/libs/matter-js/0.19.0/matter.min.js"></script>
   <script src="script.js"></script>
