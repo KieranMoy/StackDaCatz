@@ -170,6 +170,7 @@ let bannerStart   = null;
 const BANNER_MS   = 1200;
 
 function triggerLevelClear() {
+  console.log(`triggerLevelClear fired! level=${level}, catsThisLevel=${catsThisLevel}`);
   levelClearing = true;
   pending = null;
 
