@@ -20,12 +20,16 @@ const COLOR_LIST = [
 
 // ── Layout ──────────────────────────────────────────────────────────────────
 const TABLE_Y     = CANVAS_H - 100;
-const TABLE_W     = CANVAS_W * 0.65;
+const TABLE_W     = CANVAS_W * 0.45;   // narrower table — more challenging
 const TABLE_H     = 18;
 const TABLE_X     = CANVAS_W / 2;
 const DROP_Y      = 60;
 const PHYS_SLAB_H = 60;
 const SLAB_CY     = TABLE_Y + PHYS_SLAB_H / 2;
+
+// Edge of the table surface in canvas pixels — used for fall detection
+const TABLE_LEFT  = TABLE_X - TABLE_W / 2;
+const TABLE_RIGHT = TABLE_X + TABLE_W / 2;
 
 // ── Cat shape definitions ────────────────────────────────────────────────────
 // Each variant defines:
@@ -114,6 +118,7 @@ function dropCat() {
   });
   cat._color = pending.color;
   cat._shape = shape.id;
+  cat._physW = shape.physW;
 
   World.add(world, cat);
   catBodies.push(cat);
@@ -155,10 +160,18 @@ function restart() {
 // ── Fall detection ───────────────────────────────────────────────────────────
 function checkFallen() {
   for (const cat of catBodies) {
-    if (cat.position.y > CANVAS_H + 80) { triggerGameOver(); return; }
-    const offLeft  = cat.position.x < TABLE_X - TABLE_W / 2 - 80;
-    const offRight = cat.position.x > TABLE_X + TABLE_W / 2 + 80;
-    if ((offLeft || offRight) && cat.position.y > TABLE_Y + 30) { triggerGameOver(); return; }
+    // Fell through the bottom of the canvas entirely
+    if (cat.position.y > CANVAS_H + 60) { triggerGameOver(); return; }
+
+    // Only care about cats that have dropped below the table surface level
+    if (cat.position.y < TABLE_Y - 10) continue;
+
+    // Grace = half the cat's own physics width so the edge feels fair
+    const halfW = (cat._physW || 30) / 2;
+    const offLeft  = cat.position.x + halfW < TABLE_LEFT;
+    const offRight = cat.position.x - halfW > TABLE_RIGHT;
+
+    if (offLeft || offRight) { triggerGameOver(); return; }
   }
 }
 
