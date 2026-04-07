@@ -94,7 +94,14 @@ function registerCollisionEvents() {
       if (catHitsTable) {
         const cat = bodyA.label === 'cat' ? bodyA : bodyB;
         if (!cat.isStatic) {
+          // Snapshot exact position & angle at moment of contact
+          const x     = cat.position.x;
+          const y     = cat.position.y;
+          const angle = cat.angle;
           Body.setStatic(cat, true);
+          // Re-apply snapshot so collision resolver can't nudge it
+          Body.setPosition(cat, { x, y });
+          Body.setAngle(cat, angle);
           cat._frozen = true;
         }
       }
