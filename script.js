@@ -70,10 +70,15 @@ let wobbleTick = 0;
 // ── Physics setup ───────────────────────────────────────────────────────────
 function makeStaticBodies() {
   const table = Bodies.rectangle(TABLE_X, SLAB_CY, TABLE_W, PHYS_SLAB_H, {
-    isStatic: true, label: 'table', friction: 1.8, frictionStatic: 2.5, restitution: 0.02,
+    isStatic: true, label: 'table',
+    friction:       100,   // effectively infinite — nothing slides on the table
+    frictionStatic: 100,
+    restitution:    0.0,
+    slop:           0.05,
   });
   const floor = Bodies.rectangle(CANVAS_W / 2, CANVAS_H - 10, CANVAS_W * 4, 40, {
     isStatic: true, label: 'floor',
+    friction: 100, frictionStatic: 100, restitution: 0.0,
   });
   const wallL = Bodies.rectangle(-25, CANVAS_H / 2, 50, CANVAS_H * 3, { isStatic: true });
   const wallR = Bodies.rectangle(CANVAS_W + 25, CANVAS_H / 2, 50, CANVAS_H * 3, { isStatic: true });
@@ -81,8 +86,15 @@ function makeStaticBodies() {
 }
 
 function initPhysics() {
-  engine = Engine.create({ gravity: { x: 0, y: 2.5 } });
-  world  = engine.world;
+  engine = Engine.create({
+    gravity:            { x: 0, y: 2.5 },
+    positionIterations: 20,   // default 6  — more iterations = less phasing
+    velocityIterations: 16,   // default 4  — more iterations = more stable contacts
+    constraintIterations: 4,  // default 2
+  });
+  // Reduce the allowed overlap between bodies so they don't sink into each other
+  engine.pairs.table = {};
+  world = engine.world;
   World.add(world, makeStaticBodies());
 }
 
@@ -110,12 +122,13 @@ function dropCat() {
 
   const { shape } = pending;
   const cat = Bodies.rectangle(pending.x, pending.y, shape.physW, shape.physH, {
-    restitution:   0.02,   // barely any bounce
-    friction:      1.8,    // high surface friction — grips whatever it lands on
-    frictionAir:   0.03,   // a touch more air resistance so they settle faster
-    frictionStatic: 2.5,   // high static friction so resting cats really stick
-    density:       0.005,
-    label:         'cat',
+    restitution:    0.0,   // no bounce at all
+    friction:       1.5,   // high cat-on-cat grip
+    frictionAir:    0.05,  // settles quickly
+    frictionStatic: 2.0,   // once stopped, stays stopped
+    slop:           0.05,  // minimal allowed overlap — reduces jitter and phasing
+    density:        0.005,
+    label:          'cat',
   });
   cat._color = pending.color;
   cat._shape = shape.id;
@@ -514,14 +527,21 @@ function drawShapeLabel(x, y, shapeId) {
 }
 
 // ── Game loop ─────────────────────────────────────────────────────────────────
-const MOVE_SPEED = 4;
-let lastTime = 0;
+const MOVE_SPEED    = 4;
+const FIXED_STEP_MS = 1000 / 60; // fixed 60hz physics regardless of frame rate
+let lastTime     = 0;
+let physicsAccum = 0;
 
 function gameLoop(ts) {
-  const dt = Math.min(ts - lastTime, 50);
-  lastTime = ts;
+  const frameDt = Math.min(ts - lastTime, 100); // cap at 100ms to avoid spiral of death
+  lastTime      = ts;
+  physicsAccum += frameDt;
 
-  Engine.update(engine, dt);
+  // Step physics in fixed increments — eliminates variable-dt jitter
+  while (physicsAccum >= FIXED_STEP_MS) {
+    Engine.update(engine, FIXED_STEP_MS);
+    physicsAccum -= FIXED_STEP_MS;
+  }
 
   if (pending && !gameOver) {
     wobbleTick += 0.07;
