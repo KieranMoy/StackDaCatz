@@ -1,6 +1,6 @@
 // ─── Stack Da Catz ───────────────────────────────────────────────────────────
 
-const { Engine, Bodies, Body, World } = Matter;
+const { Engine, Bodies, Body, World, Events } = Matter;
 
 // ── Canvas ─────────────────────────────────────────────────────────────────
 const canvas = document.getElementById('game');
@@ -85,17 +85,33 @@ function makeStaticBodies() {
   return [table, floor, wallL, wallR];
 }
 
+function registerCollisionEvents() {
+  Events.on(engine, 'collisionStart', e => {
+    for (const pair of e.pairs) {
+      const { bodyA, bodyB } = pair;
+      const catHitsTable = (bodyA.label === 'cat' && bodyB.label === 'table')
+                        || (bodyB.label === 'cat' && bodyA.label === 'table');
+      if (catHitsTable) {
+        const cat = bodyA.label === 'cat' ? bodyA : bodyB;
+        if (!cat.isStatic) {
+          Body.setStatic(cat, true);
+          cat._frozen = true;
+        }
+      }
+    }
+  });
+}
+
 function initPhysics() {
   engine = Engine.create({
-    gravity:            { x: 0, y: 2.5 },
-    positionIterations: 20,   // default 6  — more iterations = less phasing
-    velocityIterations: 16,   // default 4  — more iterations = more stable contacts
-    constraintIterations: 4,  // default 2
+    gravity:              { x: 0, y: 2.5 },
+    positionIterations:   30,
+    velocityIterations:   20,
+    constraintIterations: 6,
   });
-  // Reduce the allowed overlap between bodies so they don't sink into each other
-  engine.pairs.table = {};
   world = engine.world;
   World.add(world, makeStaticBodies());
+  registerCollisionEvents();
 }
 
 // ── Spawn / drop ─────────────────────────────────────────────────────────────
@@ -168,10 +184,37 @@ function restart() {
   document.getElementById('score').textContent = '0';
   document.getElementById('overlay').classList.add('hidden');
   World.add(world, makeStaticBodies());
+  registerCollisionEvents(); // re-attach after Engine.clear wiped listeners
   spawnPending();
 }
 
-// ── Fall detection ───────────────────────────────────────────────────────────
+// ── Settle & freeze ──────────────────────────────────────────────────────────
+// Cats touching the table are frozen immediately via collision event.
+// Cats resting on top of other cats are frozen once they slow to a crawl.
+const SETTLE_SPEED   = 0.4;  // px/frame threshold — below this we freeze
+const SETTLE_FRAMES  = 8;    // must be slow for this many consecutive frames
+
+function checkSettle() {
+  for (const cat of catBodies) {
+    if (cat.isStatic) continue; // already frozen
+
+    const speed = Math.sqrt(
+      cat.velocity.x * cat.velocity.x + cat.velocity.y * cat.velocity.y
+    );
+
+    if (speed < SETTLE_SPEED) {
+      cat._slowFrames = (cat._slowFrames || 0) + 1;
+      if (cat._slowFrames >= SETTLE_FRAMES) {
+        Body.setStatic(cat, true);
+        cat._frozen = true;
+      }
+    } else {
+      cat._slowFrames = 0;
+    }
+  }
+}
+
+
 function checkFallen() {
   for (const cat of catBodies) {
     // Fell through the bottom of the canvas entirely
@@ -552,6 +595,7 @@ function gameLoop(ts) {
     pending.x = pendingX;
   }
 
+  checkSettle();
   checkFallen();
 
   drawBackground();
