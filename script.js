@@ -196,27 +196,47 @@ function restart() {
 }
 
 // ── Settle & freeze ──────────────────────────────────────────────────────────
-// Cats touching the table are frozen immediately via collision event.
-// Cats resting on top of other cats are frozen once they slow to a crawl.
-const SETTLE_SPEED   = 0.4;  // px/frame threshold — below this we freeze
-const SETTLE_FRAMES  = 8;    // must be slow for this many consecutive frames
+// Any cat that has been in contact with the table OR another frozen cat
+// for 2 continuous seconds gets frozen in place.
+const SETTLE_MS = 2000;
 
-function checkSettle() {
+function checkSettle(now) {
+  // Build a set of frozen cat IDs so we can check cat-on-cat contact
+  const frozenIds = new Set(catBodies.filter(c => c.isStatic).map(c => c.id));
+
   for (const cat of catBodies) {
-    if (cat.isStatic) continue; // already frozen
+    if (cat.isStatic) continue;
 
-    const speed = Math.sqrt(
-      cat.velocity.x * cat.velocity.x + cat.velocity.y * cat.velocity.y
-    );
+    // Check if this cat is currently touching the table or a frozen cat
+    const pairs = engine.pairs.list || [];
+    let touchingStable = false;
+    for (const pair of pairs) {
+      if (!pair.isActive) continue;
+      const { bodyA, bodyB } = pair;
+      const involved = (bodyA === cat || bodyB === cat);
+      if (!involved) continue;
+      const other = bodyA === cat ? bodyB : bodyA;
+      if (other.label === 'table' || other.label === 'floor' || frozenIds.has(other.id)) {
+        touchingStable = true;
+        break;
+      }
+    }
 
-    if (speed < SETTLE_SPEED) {
-      cat._slowFrames = (cat._slowFrames || 0) + 1;
-      if (cat._slowFrames >= SETTLE_FRAMES) {
+    if (touchingStable) {
+      // Start or continue the contact timer
+      if (!cat._contactSince) cat._contactSince = now;
+      if (now - cat._contactSince >= SETTLE_MS) {
+        // Snapshot and freeze
+        const { x, y } = cat.position;
+        const angle = cat.angle;
         Body.setStatic(cat, true);
+        Body.setPosition(cat, { x, y });
+        Body.setAngle(cat, angle);
         cat._frozen = true;
       }
     } else {
-      cat._slowFrames = 0;
+      // Lost contact — reset timer
+      cat._contactSince = null;
     }
   }
 }
@@ -602,7 +622,7 @@ function gameLoop(ts) {
     pending.x = pendingX;
   }
 
-  checkSettle();
+  checkSettle(ts);
   checkFallen();
 
   drawBackground();
