@@ -18,34 +18,25 @@ const COLOR_LIST = [
   '#1E88E5','#7CB342','#F9A825','#E53935',
 ];
 
-// ── Layout ──────────────────────────────────────────────────────────────────
-const TABLE_Y     = CANVAS_H - 100;
-const TABLE_W     = CANVAS_W * 0.45;   // narrower table — more challenging
-const TABLE_H     = 18;
-const TABLE_X     = CANVAS_W / 2;
-const DROP_Y      = 60;
-const PHYS_SLAB_H = 60;
-const SLAB_CY     = TABLE_Y + PHYS_SLAB_H / 2;
+// ── Layout constants (fixed) ─────────────────────────────────────────────────
+const TABLE_Y       = CANVAS_H - 100;
+const TABLE_H       = 18;
+const TABLE_X       = CANVAS_W / 2;
+const DROP_Y        = 60;
+const PHYS_SLAB_H   = 60;
+const SLAB_CY       = TABLE_Y + PHYS_SLAB_H / 2;
+const BASE_TABLE_W  = CANVAS_W * 0.45;  // starting width
+const MIN_TABLE_W   = CANVAS_W * 0.18;  // never shrink below this
+const CATS_PER_LEVEL = 20;
 
-// Edge of the table surface in canvas pixels — used for fall detection
-const TABLE_LEFT  = TABLE_X - TABLE_W / 2;
-const TABLE_RIGHT = TABLE_X + TABLE_W / 2;
+// ── Level state (mutable — changes each level) ────────────────────────────────
+let tableW     = BASE_TABLE_W;
+let tableLeft  = TABLE_X - tableW / 2;
+let tableRight = TABLE_X + tableW / 2;
+let level      = 1;
+let catsThisLevel = 0;   // how many cats placed in the current level
 
-// ── Cat shape definitions ────────────────────────────────────────────────────
-// Each variant defines:
-//   id       – name used in drawCat switch
-//   physW    – physics body width
-//   physH    – physics body height
-//   label    – shown in the aim indicator tooltip (optional)
-//
-// Physics dimensions are chosen to match the visual silhouette so stacking
-// feels fair but each shape has different balance characteristics:
-//   normal   – 52×34  balanced oval, easy starter
-//   loaf     – 66×28  wide & flat, stable base but hard to pile on top
-//   sitting  – 36×58  tall & narrow, tips sideways easily
-//   curled   – 44×44  near-square/round, rolls off edges
-//   stretch  – 78×24  very long and low, seesaws on the stack
-
+// ── Cat shape definitions ─────────────────────────────────────────────────────
 const CAT_SHAPES = [
   { id: 'normal',  physW: 52, physH: 34 },
   { id: 'loaf',    physW: 66, physH: 28 },
@@ -56,25 +47,22 @@ const CAT_SHAPES = [
 
 // ── State ──────────────────────────────────────────────────────────────────
 let engine, world;
-let catBodies  = [];
-let pending    = null;
-let pendingX   = CANVAS_W / 2;
-let score      = 0;
-let best       = 0;
-let gameOver   = false;
-let keys       = {};
-let colorIdx   = 0;
-let shapeIdx   = 0;
-let wobbleTick = 0;
+let catBodies     = [];
+let pending       = null;
+let pendingX      = CANVAS_W / 2;
+let score         = 0;
+let best          = 0;
+let gameOver      = false;
+let levelClearing = false;   // true during the clear animation — blocks input
+let keys          = {};
+let colorIdx      = 0;
+let wobbleTick    = 0;
 
-// ── Physics setup ───────────────────────────────────────────────────────────
+// ── Physics setup ─────────────────────────────────────────────────────────────
 function makeStaticBodies() {
-  const table = Bodies.rectangle(TABLE_X, SLAB_CY, TABLE_W, PHYS_SLAB_H, {
+  const table = Bodies.rectangle(TABLE_X, SLAB_CY, tableW, PHYS_SLAB_H, {
     isStatic: true, label: 'table',
-    friction:       100,   // effectively infinite — nothing slides on the table
-    frictionStatic: 100,
-    restitution:    0.0,
-    slop:           0.05,
+    friction: 100, frictionStatic: 100, restitution: 0.0, slop: 0.05,
   });
   const floor = Bodies.rectangle(CANVAS_W / 2, CANVAS_H - 10, CANVAS_W * 4, 40, {
     isStatic: true, label: 'floor',
@@ -94,12 +82,8 @@ function registerCollisionEvents() {
       if (catHitsTable) {
         const cat = bodyA.label === 'cat' ? bodyA : bodyB;
         if (!cat.isStatic) {
-          // Snapshot exact position & angle at moment of contact
-          const x     = cat.position.x;
-          const y     = cat.position.y;
-          const angle = cat.angle;
+          const x = cat.position.x, y = cat.position.y, angle = cat.angle;
           Body.setStatic(cat, true);
-          // Re-apply snapshot so collision resolver can't nudge it
           Body.setPosition(cat, { x, y });
           Body.setAngle(cat, angle);
           cat._frozen = true;
@@ -121,40 +105,30 @@ function initPhysics() {
   registerCollisionEvents();
 }
 
-// ── Spawn / drop ─────────────────────────────────────────────────────────────
+// ── Spawn / drop ──────────────────────────────────────────────────────────────
 function randomShape() {
-  // Shuffle shape order so it feels random but covers all types
   return CAT_SHAPES[Math.floor(Math.random() * CAT_SHAPES.length)];
 }
 
 function spawnPending() {
-  // Random start position across the middle 70% of the canvas so it's never
-  // trivially centred but also never spawns right at the edge
   const margin = CANVAS_W * 0.15;
   pendingX = margin + Math.random() * (CANVAS_W - margin * 2);
   const shape = randomShape();
   pending = {
-    x:      pendingX,
-    y:      DROP_Y,
-    color:  COLOR_LIST[colorIdx % COLOR_LIST.length],
-    shape,
-    wobble: 0,
+    x: pendingX, y: DROP_Y,
+    color: COLOR_LIST[colorIdx % COLOR_LIST.length],
+    shape, wobble: 0,
   };
   colorIdx++;
 }
 
 function dropCat() {
-  if (!pending || gameOver) return;
+  if (!pending || gameOver || levelClearing) return;
 
   const { shape } = pending;
   const cat = Bodies.rectangle(pending.x, pending.y, shape.physW, shape.physH, {
-    restitution:    0.0,   // no bounce at all
-    friction:       1.5,   // high cat-on-cat grip
-    frictionAir:    0.05,  // settles quickly
-    frictionStatic: 2.0,   // once stopped, stays stopped
-    slop:           0.05,  // minimal allowed overlap — reduces jitter and phasing
-    density:        0.005,
-    label:          'cat',
+    restitution: 0.0, friction: 1.5, frictionAir: 0.05,
+    frictionStatic: 2.0, slop: 0.05, density: 0.005, label: 'cat',
   });
   cat._color = pending.color;
   cat._shape = shape.id;
@@ -165,15 +139,95 @@ function dropCat() {
   pending = null;
 
   setTimeout(() => {
-    if (!gameOver) {
-      score++;
-      document.getElementById('score').textContent = score;
+    if (gameOver || levelClearing) return;
+    score++;
+    catsThisLevel++;
+    document.getElementById('score').textContent = score;
+
+    if (catsThisLevel >= CATS_PER_LEVEL) {
+      triggerLevelClear();
+    } else {
       spawnPending();
     }
   }, 650);
 }
 
-// ── Game over / restart ──────────────────────────────────────────────────────
+// ── Level clear sequence ──────────────────────────────────────────────────────
+// The animation has three phases driven by setTimeout:
+//   1. Flash "Level Complete!" banner for 1.2s while cats are still visible
+//   2. Sweep cats off the table (animate them flying away) over 0.8s
+//   3. Show the new (smaller) table and resume play
+
+// Snapshot of cats for the sweep animation — stored as plain objects so we
+// can animate them independently after the physics world is cleared.
+let sweepCats   = [];   // [{ x, y, angle, color, shape, vx, vy }]
+let sweepStart  = null; // timestamp when sweep animation began
+const SWEEP_MS  = 800;
+
+let bannerText    = '';
+let bannerOpacity = 0;
+let bannerStart   = null;
+const BANNER_MS   = 1200;
+
+function triggerLevelClear() {
+  levelClearing = true;
+  pending = null;
+
+  bannerText    = `Level ${level} Clear! 🎉`;
+  bannerStart   = performance.now();
+  bannerOpacity = 1;
+
+  // After banner has shown, sweep the cats away
+  setTimeout(() => {
+    // Snapshot all cat positions for the sweep animation
+    sweepCats = catBodies.map(cat => ({
+      x: cat.position.x, y: cat.position.y,
+      angle: cat.angle,
+      color: cat._color, shape: cat._shape,
+      // random outward velocity for the sweep
+      vx: (Math.random() - 0.5) * 18,
+      vy: -(Math.random() * 10 + 6),
+    }));
+
+    // Clear the physics world of cat bodies
+    for (const cat of catBodies) World.remove(world, cat);
+    catBodies = [];
+
+    sweepStart = performance.now();
+
+    // After sweep finishes, set up next level
+    setTimeout(() => {
+      sweepCats = [];
+
+      // Shrink the table
+      level++;
+      catsThisLevel = 0;
+      tableW     = Math.max(MIN_TABLE_W, tableW * 0.75);
+      tableLeft  = TABLE_X - tableW / 2;
+      tableRight = TABLE_X + tableW / 2;
+      document.getElementById('level-display').textContent = level;
+
+      // Rebuild physics world with new table size
+      World.clear(world);
+      Engine.clear(engine);
+      World.add(world, makeStaticBodies());
+      registerCollisionEvents();
+
+      bannerText    = `Level ${level}`;
+      bannerStart   = performance.now();
+      bannerOpacity = 1;
+
+      setTimeout(() => {
+        levelClearing = false;
+        bannerText    = '';
+        spawnPending();
+      }, 900);
+
+    }, SWEEP_MS + 100);
+  }, BANNER_MS);
+}
+
+// ── Game over / restart ───────────────────────────────────────────────────────
 function triggerGameOver() {
   if (gameOver) return;
   gameOver = true;
@@ -186,50 +240,49 @@ function triggerGameOver() {
 function restart() {
   World.clear(world);
   Engine.clear(engine);
-  catBodies  = [];
-  score      = 0;
-  gameOver   = false;
-  colorIdx   = 0;
-  wobbleTick = 0;
+  catBodies     = [];
+  sweepCats     = [];
+  score         = 0;
+  gameOver      = false;
+  levelClearing = false;
+  colorIdx      = 0;
+  wobbleTick    = 0;
+  level         = 1;
+  catsThisLevel = 0;
+  tableW        = BASE_TABLE_W;
+  tableLeft     = TABLE_X - tableW / 2;
+  tableRight    = TABLE_X + tableW / 2;
+  bannerText    = '';
+  sweepStart    = null;
   document.getElementById('score').textContent = '0';
+  document.getElementById('level-display').textContent = '1';
   document.getElementById('overlay').classList.add('hidden');
   World.add(world, makeStaticBodies());
-  registerCollisionEvents(); // re-attach after Engine.clear wiped listeners
+  registerCollisionEvents();
   spawnPending();
 }
 
-// ── Settle & freeze ──────────────────────────────────────────────────────────
-// Any cat that has been in contact with the table OR another frozen cat
-// for 2 continuous seconds gets frozen in place.
+// ── Settle & freeze ───────────────────────────────────────────────────────────
 const SETTLE_MS = 2000;
 
 function checkSettle(now) {
-  // Build a set of frozen cat IDs so we can check cat-on-cat contact
   const frozenIds = new Set(catBodies.filter(c => c.isStatic).map(c => c.id));
-
   for (const cat of catBodies) {
     if (cat.isStatic) continue;
-
-    // Check if this cat is currently touching the table or a frozen cat
     const pairs = engine.pairs.list || [];
     let touchingStable = false;
     for (const pair of pairs) {
       if (!pair.isActive) continue;
       const { bodyA, bodyB } = pair;
-      const involved = (bodyA === cat || bodyB === cat);
-      if (!involved) continue;
+      if (bodyA !== cat && bodyB !== cat) continue;
       const other = bodyA === cat ? bodyB : bodyA;
       if (other.label === 'table' || other.label === 'floor' || frozenIds.has(other.id)) {
-        touchingStable = true;
-        break;
+        touchingStable = true; break;
       }
     }
-
     if (touchingStable) {
-      // Start or continue the contact timer
       if (!cat._contactSince) cat._contactSince = now;
       if (now - cat._contactSince >= SETTLE_MS) {
-        // Snapshot and freeze
         const { x, y } = cat.position;
         const angle = cat.angle;
         Body.setStatic(cat, true);
@@ -238,26 +291,20 @@ function checkSettle(now) {
         cat._frozen = true;
       }
     } else {
-      // Lost contact — reset timer
       cat._contactSince = null;
     }
   }
 }
 
-
+// ── Fall detection ────────────────────────────────────────────────────────────
 function checkFallen() {
+  if (levelClearing) return;
   for (const cat of catBodies) {
-    // Fell through the bottom of the canvas entirely
     if (cat.position.y > CANVAS_H + 60) { triggerGameOver(); return; }
-
-    // Only care about cats that have dropped below the table surface level
     if (cat.position.y < TABLE_Y - 10) continue;
-
-    // Grace = half the cat's own physics width so the edge feels fair
-    const halfW = (cat._physW || 30) / 2;
-    const offLeft  = cat.position.x + halfW < TABLE_LEFT;
-    const offRight = cat.position.x - halfW > TABLE_RIGHT;
-
+    const halfW   = (cat._physW || 30) / 2;
+    const offLeft  = cat.position.x + halfW < tableLeft;
+    const offRight = cat.position.x - halfW > tableRight;
     if (offLeft || offRight) { triggerGameOver(); return; }
   }
 }
@@ -271,63 +318,40 @@ function shade(hex, amt) {
 }
 
 // ── Cat drawing ───────────────────────────────────────────────────────────────
-// Each variant draws a visually distinct cat pose.
-// x/y is the centre of the physics body (same as Matter body position).
-
 function drawCatNormal(x, y, color, angle, wobble) {
-  // Relaxed cat lying on its side — the original design
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
   const bw = 44, bh = 27;
   const hx = -bw*0.38, hy = -bh*0.3, hr = bh*0.58;
-
   ctx.fillStyle = color;
-  ctx.beginPath(); ctx.ellipse(0, 0, bw/2, bh/2, 0, 0, Math.PI*2); ctx.fill(); // body
-
-  ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI*2); ctx.fill(); // head
-
-  // Ears
+  ctx.beginPath(); ctx.ellipse(0, 0, bw/2, bh/2, 0, 0, Math.PI*2); ctx.fill();
+  ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI*2); ctx.fill();
   ctx.fillStyle = shade(color,-25);
   for (const [x1,y1,x2,y2,x3,y3] of [
     [hx-hr*0.7,hy-hr*0.6, hx-hr*0.28,hy-hr*1.25, hx+hr*0.05,hy-hr*0.55],
     [hx+hr*0.3,hy-hr*0.65, hx+hr*0.7,hy-hr*1.2, hx+hr*0.95,hy-hr*0.5],
   ]) { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.closePath(); ctx.fill(); }
-
-  // Inner ears
   ctx.fillStyle = 'rgba(255,255,255,0.35)';
   for (const [x1,y1,x2,y2,x3,y3] of [
     [hx-hr*0.55,hy-hr*0.7, hx-hr*0.3,hy-hr*1.08, hx,hy-hr*0.62],
     [hx+hr*0.42,hy-hr*0.7, hx+hr*0.65,hy-hr*1.06, hx+hr*0.84,hy-hr*0.56],
   ]) { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.closePath(); ctx.fill(); }
-
   drawFace(hx, hy, hr, color);
-
-  // Tail
   ctx.strokeStyle = color; ctx.lineWidth = 6; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(bw*0.4, 2);
   ctx.quadraticCurveTo(bw*0.65+Math.sin(wobble)*4, -bh*0.8, bw*0.5, -bh*1.2); ctx.stroke();
-
-  // Paws
   ctx.fillStyle = shade(color,-15);
   ctx.beginPath(); ctx.ellipse(-bw*0.25, bh*0.42, bw*0.13, bh*0.18, -0.3, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse( bw*0.18, bh*0.44, bw*0.13, bh*0.18,  0.3, 0, Math.PI*2); ctx.fill();
-
   ctx.restore();
 }
 
 function drawCatLoaf(x, y, color, angle, wobble) {
-  // Loaf cat — wide, flat, tucked paws, smug expression
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
   const bw = 58, bh = 22;
   const hx = -bw*0.28, hy = -bh*0.75, hr = bh*0.72;
-
-  // Body: wide rectangle with rounded ends
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.roundRect(-bw/2, -bh/2, bw, bh, bh*0.45); ctx.fill();
-
-  // Head sits on top of the loaf body
   ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI*2); ctx.fill();
-
-  // Ears (short, pointy)
   ctx.fillStyle = shade(color,-25);
   for (const [x1,y1,x2,y2,x3,y3] of [
     [hx-hr*0.65,hy-hr*0.55, hx-hr*0.2,hy-hr*1.15, hx+hr*0.1,hy-hr*0.5],
@@ -338,36 +362,23 @@ function drawCatLoaf(x, y, color, angle, wobble) {
     [hx-hr*0.52,hy-hr*0.65, hx-hr*0.22,hy-hr*1.02, hx+hr*0.04,hy-hr*0.58],
     [hx+hr*0.34,hy-hr*0.66, hx+hr*0.6,hy-hr*1.0, hx+hr*0.8,hy-hr*0.54],
   ]) { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.closePath(); ctx.fill(); }
-
   drawFace(hx, hy, hr, color);
-
-  // No visible paws (tucked in) — just two little nubs at the bottom front
   ctx.fillStyle = shade(color,-12);
   ctx.beginPath(); ctx.ellipse(-bw*0.18, bh*0.38, bw*0.11, bh*0.22, 0, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse( bw*0.12, bh*0.38, bw*0.11, bh*0.22, 0, 0, Math.PI*2); ctx.fill();
-
-  // Tiny tail tip peeking at back
   ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(bw*0.46, 0);
   ctx.quadraticCurveTo(bw*0.58+Math.sin(wobble)*3, -bh*0.6, bw*0.44, -bh*1.0); ctx.stroke();
-
   ctx.restore();
 }
 
 function drawCatSitting(x, y, color, angle, wobble) {
-  // Sitting cat — tall and upright, narrow base, easy to topple
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
   const bw = 26, bh = 46;
   const hx = 0, hy = -bh*0.42, hr = bw*0.68;
-
-  // Body: tall oval
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.ellipse(0, bh*0.08, bw/2, bh*0.45, 0, 0, Math.PI*2); ctx.fill();
-
-  // Head (larger relative to body)
   ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI*2); ctx.fill();
-
-  // Tall pointy ears
   ctx.fillStyle = shade(color,-25);
   for (const [x1,y1,x2,y2,x3,y3] of [
     [hx-hr*0.7,hy-hr*0.5, hx-hr*0.25,hy-hr*1.35, hx+hr*0.1,hy-hr*0.45],
@@ -378,39 +389,24 @@ function drawCatSitting(x, y, color, angle, wobble) {
     [hx-hr*0.58,hy-hr*0.6, hx-hr*0.28,hy-hr*1.18, hx+hr*0.05,hy-hr*0.52],
     [hx+hr*0.33,hy-hr*0.62, hx+hr*0.65,hy-hr*1.15, hx+hr*0.84,hy-hr*0.5],
   ]) { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.closePath(); ctx.fill(); }
-
   drawFace(hx, hy, hr, color);
-
-  // Front paws on the ground
   ctx.fillStyle = shade(color,-15);
   ctx.beginPath(); ctx.ellipse(-bw*0.3, bh*0.44, bw*0.22, bh*0.1, 0.2, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse( bw*0.3, bh*0.44, bw*0.22, bh*0.1, -0.2, 0, Math.PI*2); ctx.fill();
-
-  // Tail curled around side
   ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(bw*0.28, bh*0.3);
   ctx.quadraticCurveTo(bw*0.9+Math.sin(wobble)*4, bh*0.1, bw*0.55, bh*0.48); ctx.stroke();
-
   ctx.restore();
 }
 
 function drawCatCurled(x, y, color, angle, wobble) {
-  // Curled-up sleeping cat — near-circular, rolls around
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
-  const r = 20; // roughly circular
-
-  // Main curled body — big circle
+  const r = 20;
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.arc(0, 0, r, 0, Math.PI*2); ctx.fill();
-
-  // Second body lobe for a "C" curl shape
   ctx.beginPath(); ctx.ellipse(r*0.55, r*0.35, r*0.62, r*0.42, 0.8, 0, Math.PI*2); ctx.fill();
-
-  // Head tucked into the curl (small, at top-right)
   const hx = r*0.52, hy = -r*0.52, hr = r*0.55;
   ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI*2); ctx.fill();
-
-  // Tiny ears (cat is sleepy, ears flat-ish)
   ctx.fillStyle = shade(color,-25);
   for (const [x1,y1,x2,y2,x3,y3] of [
     [hx-hr*0.6,hy-hr*0.5, hx-hr*0.15,hy-hr*1.05, hx+hr*0.15,hy-hr*0.42],
@@ -421,32 +417,20 @@ function drawCatCurled(x, y, color, angle, wobble) {
     [hx-hr*0.48,hy-hr*0.58, hx-hr*0.18,hy-hr*0.93, hx+hr*0.08,hy-hr*0.5],
     [hx+hr*0.28,hy-hr*0.62, hx+hr*0.55,hy-hr*0.9, hx+hr*0.73,hy-hr*0.47],
   ]) { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.closePath(); ctx.fill(); }
-
-  // Sleepy face (eyes half-closed)
   drawFaceSleepy(hx, hy, hr, color);
-
-  // Tail wraps around the body
   ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(-r*0.5, r*0.2);
   ctx.quadraticCurveTo(-r*1.1+Math.sin(wobble)*3, r*0.8, r*0.1, r*1.0); ctx.stroke();
-
   ctx.restore();
 }
 
 function drawCatStretch(x, y, color, angle, wobble) {
-  // Stretched-out cat — very long and low, like mid-yawn stretch
   ctx.save(); ctx.translate(x, y); ctx.rotate(angle);
   const bw = 68, bh = 18;
   const hx = -bw*0.44, hy = -bh*0.6, hr = bh*0.82;
-
-  // Long stretched body
   ctx.fillStyle = color;
   ctx.beginPath(); ctx.ellipse(bw*0.05, 0, bw/2, bh/2, 0, 0, Math.PI*2); ctx.fill();
-
-  // Head at the far left (like reaching forward)
   ctx.beginPath(); ctx.arc(hx, hy, hr, 0, Math.PI*2); ctx.fill();
-
-  // Ears (flattened back slightly — stretching)
   ctx.fillStyle = shade(color,-25);
   for (const [x1,y1,x2,y2,x3,y3] of [
     [hx-hr*0.5,hy-hr*0.5, hx-hr*0.05,hy-hr*1.15, hx+hr*0.28,hy-hr*0.42],
@@ -457,29 +441,19 @@ function drawCatStretch(x, y, color, angle, wobble) {
     [hx-hr*0.4,hy-hr*0.58, hx-hr*0.07,hy-hr*1.02, hx+hr*0.22,hy-hr*0.5],
     [hx+hr*0.38,hy-hr*0.62, hx+hr*0.68,hy-hr*0.98, hx+hr*0.85,hy-hr*0.47],
   ]) { ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2); ctx.lineTo(x3,y3); ctx.closePath(); ctx.fill(); }
-
   drawFace(hx, hy, hr, color);
-
-  // Two sets of paws (front stretched out, back tucked)
   ctx.fillStyle = shade(color,-15);
-  // Front paws reaching forward
   ctx.beginPath(); ctx.ellipse(hx+hr*0.4, bh*0.35, bw*0.1, bh*0.3, -0.4, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(hx+hr*0.9, bh*0.38, bw*0.1, bh*0.3, -0.3, 0, Math.PI*2); ctx.fill();
-  // Back paws
   ctx.beginPath(); ctx.ellipse(bw*0.36, bh*0.35, bw*0.09, bh*0.3, 0.3, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(bw*0.46, bh*0.32, bw*0.09, bh*0.3, 0.4, 0, Math.PI*2); ctx.fill();
-
-  // Tail up in the air at the right end
   ctx.strokeStyle = color; ctx.lineWidth = 5; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(bw*0.46, -2);
   ctx.quadraticCurveTo(bw*0.6+Math.sin(wobble)*4, -bh*1.4, bw*0.42, -bh*2.0); ctx.stroke();
-
   ctx.restore();
 }
 
-// ── Shared face drawing helpers ───────────────────────────────────────────────
 function drawFace(hx, hy, hr, color) {
-  // Eyes
   ctx.fillStyle = 'white';
   ctx.beginPath(); ctx.ellipse(hx-hr*0.38, hy-hr*0.05, hr*0.26, hr*0.22, 0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(hx+hr*0.30, hy-hr*0.05, hr*0.26, hr*0.22, 0,0,Math.PI*2); ctx.fill();
@@ -489,14 +463,11 @@ function drawFace(hx, hy, hr, color) {
   ctx.fillStyle = 'white';
   ctx.beginPath(); ctx.arc(hx-hr*0.28, hy-hr*0.1, hr*0.06, 0, Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.arc(hx+hr*0.40, hy-hr*0.1, hr*0.06, 0, Math.PI*2); ctx.fill();
-  // Nose
   ctx.fillStyle = '#FF8A80';
   ctx.beginPath(); ctx.moveTo(hx,hy+hr*0.22); ctx.lineTo(hx-hr*0.12,hy+hr*0.12); ctx.lineTo(hx+hr*0.12,hy+hr*0.12); ctx.closePath(); ctx.fill();
-  // Mouth
   ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(hx,hy+hr*0.22); ctx.quadraticCurveTo(hx-hr*0.22,hy+hr*0.42,hx-hr*0.3,hy+hr*0.35); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(hx,hy+hr*0.22); ctx.quadraticCurveTo(hx+hr*0.22,hy+hr*0.42,hx+hr*0.3,hy+hr*0.35); ctx.stroke();
-  // Whiskers
   ctx.strokeStyle = 'rgba(0,0,0,0.22)'; ctx.lineWidth = 1;
   for (const si of [-1, 1]) {
     for (let j = 0; j < 3; j++) {
@@ -507,24 +478,19 @@ function drawFace(hx, hy, hr, color) {
 }
 
 function drawFaceSleepy(hx, hy, hr, color) {
-  // Half-closed eyes for the curled/sleeping cat
   ctx.fillStyle = 'white';
   ctx.beginPath(); ctx.ellipse(hx-hr*0.36, hy-hr*0.05, hr*0.26, hr*0.14, 0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(hx+hr*0.28, hy-hr*0.05, hr*0.26, hr*0.14, 0,0,Math.PI*2); ctx.fill();
   ctx.fillStyle = '#1a1a1a';
   ctx.beginPath(); ctx.ellipse(hx-hr*0.34, hy-hr*0.05, hr*0.13, hr*0.1, 0,0,Math.PI*2); ctx.fill();
   ctx.beginPath(); ctx.ellipse(hx+hr*0.32, hy-hr*0.05, hr*0.13, hr*0.1, 0,0,Math.PI*2); ctx.fill();
-  // Droopy eyelid lines
   ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.8; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(hx-hr*0.62, hy-hr*0.05); ctx.quadraticCurveTo(hx-hr*0.35,hy-hr*0.2,hx-hr*0.1,hy-hr*0.05); ctx.stroke();
   ctx.beginPath(); ctx.moveTo(hx+hr*0.04, hy-hr*0.05); ctx.quadraticCurveTo(hx+hr*0.3,hy-hr*0.2,hx+hr*0.55,hy-hr*0.05); ctx.stroke();
-  // Nose
   ctx.fillStyle = '#FF8A80';
   ctx.beginPath(); ctx.moveTo(hx,hy+hr*0.22); ctx.lineTo(hx-hr*0.12,hy+hr*0.12); ctx.lineTo(hx+hr*0.12,hy+hr*0.12); ctx.closePath(); ctx.fill();
-  // Sleepy "zz" mouth (just a small line)
   ctx.strokeStyle = '#1a1a1a'; ctx.lineWidth = 1.5; ctx.lineCap = 'round';
   ctx.beginPath(); ctx.moveTo(hx-hr*0.18, hy+hr*0.32); ctx.lineTo(hx+hr*0.18, hy+hr*0.32); ctx.stroke();
-  // Whiskers
   ctx.strokeStyle = 'rgba(0,0,0,0.18)'; ctx.lineWidth = 1;
   for (const si of [-1, 1]) {
     for (let j = 0; j < 2; j++) {
@@ -555,20 +521,20 @@ function drawBackground() {
 }
 
 function drawTable() {
-  const tx = TABLE_X - TABLE_W / 2;
+  const tx = TABLE_X - tableW / 2;
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.18)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
   const g = ctx.createLinearGradient(tx, TABLE_Y, tx, TABLE_Y + TABLE_H);
   g.addColorStop(0, '#A1887F'); g.addColorStop(1, '#6D4C41');
   ctx.fillStyle = g;
-  ctx.beginPath(); ctx.roundRect(tx, TABLE_Y, TABLE_W, TABLE_H, 4); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(tx, TABLE_Y, tableW, TABLE_H, 4); ctx.fill();
   ctx.restore();
   const legW = 14, legY = TABLE_Y + TABLE_H, legH = CANVAS_H - legY;
   const lg = ctx.createLinearGradient(0, legY, 0, legY + legH);
   lg.addColorStop(0, '#8D6E63'); lg.addColorStop(1, '#5D4037');
   ctx.fillStyle = lg;
   ctx.fillRect(tx + 20, legY, legW, legH);
-  ctx.fillRect(tx + TABLE_W - 20 - legW, legY, legW, legH);
+  ctx.fillRect(tx + tableW - 20 - legW, legY, legW, legH);
 }
 
 function drawAimLine(x, y) {
@@ -580,43 +546,98 @@ function drawAimLine(x, y) {
   ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 }
 
-// Shape label shown above the pending cat so the player knows what's coming
 const SHAPE_LABELS = {
-  normal:  '😼 Normal',
-  loaf:    '🍞 Loaf',
-  sitting: '🙀 Tall',
-  curled:  '😴 Curled',
-  stretch: '😸 Stretch',
+  normal: '😼 Normal', loaf: '🍞 Loaf', sitting: '🙀 Tall',
+  curled: '😴 Curled', stretch: '😸 Stretch',
 };
-
 function drawShapeLabel(x, y, shapeId) {
-  const label = SHAPE_LABELS[shapeId] || '';
   ctx.save();
   ctx.font = 'bold 12px Nunito, sans-serif';
   ctx.textAlign = 'center';
   ctx.fillStyle = 'rgba(62,39,35,0.55)';
-  ctx.fillText(label, x, y - 38);
+  ctx.fillText(SHAPE_LABELS[shapeId] || '', x, y - 38);
+  ctx.restore();
+}
+
+// ── Banner overlay (level clear / level start) ────────────────────────────────
+function drawBanner(now) {
+  if (!bannerText || !bannerStart) return;
+  const age = now - bannerStart;
+  // Fade in for 200ms, hold, fade out over last 300ms of BANNER_MS
+  let alpha = 1;
+  if (age < 200) alpha = age / 200;
+  else if (age > BANNER_MS - 300) alpha = Math.max(0, (BANNER_MS - age) / 300);
+  if (alpha <= 0) return;
+
+  ctx.save();
+  ctx.globalAlpha = alpha;
+
+  // Semi-transparent pill
+  const tw = Math.min(CANVAS_W - 40, 360);
+  const th = 72;
+  const tx = (CANVAS_W - tw) / 2;
+  const ty = CANVAS_H / 2 - th / 2 - 30;
+  ctx.fillStyle = 'rgba(255,255,255,0.92)';
+  ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, 18); ctx.fill();
+  ctx.strokeStyle = '#FF7043'; ctx.lineWidth = 3;
+  ctx.beginPath(); ctx.roundRect(tx, ty, tw, th, 18); ctx.stroke();
+
+  ctx.fillStyle = '#FF7043';
+  ctx.font = 'bold 26px Fredoka One, cursive';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(bannerText, CANVAS_W / 2, ty + th / 2);
+
+  ctx.restore();
+}
+
+// ── Sweep animation ───────────────────────────────────────────────────────────
+function updateAndDrawSweepCats(now) {
+  if (!sweepCats.length || !sweepStart) return;
+  const t = (now - sweepStart) / SWEEP_MS; // 0 → 1
+
+  for (const cat of sweepCats) {
+    // Simple projectile: apply velocity + gravity over time
+    const dt = t * (SWEEP_MS / 1000);
+    const sx = cat.x + cat.vx * dt * 60;
+    const sy = cat.y + cat.vy * dt * 60 + 0.5 * 18 * dt * dt * 60;
+    const sa = cat.angle + cat.vx * 0.04;
+    // Fade out in second half
+    const alpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
+    ctx.save();
+    ctx.globalAlpha = Math.max(0, alpha);
+    drawCat(sx, sy, cat.color, cat.shape, sa, 0);
+    ctx.restore();
+  }
+}
+
+// ── Level indicator ───────────────────────────────────────────────────────────
+function drawLevelIndicator() {
+  ctx.save();
+  ctx.font = 'bold 13px Nunito, sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(62,39,35,0.45)';
+  ctx.fillText(`Lv.${level}  ${catsThisLevel}/${CATS_PER_LEVEL} cats`, 10, CANVAS_H - 10);
   ctx.restore();
 }
 
 // ── Game loop ─────────────────────────────────────────────────────────────────
 const MOVE_SPEED    = 4;
-const FIXED_STEP_MS = 1000 / 60; // fixed 60hz physics regardless of frame rate
+const FIXED_STEP_MS = 1000 / 60;
 let lastTime     = 0;
 let physicsAccum = 0;
 
 function gameLoop(ts) {
-  const frameDt = Math.min(ts - lastTime, 100); // cap at 100ms to avoid spiral of death
+  const frameDt = Math.min(ts - lastTime, 100);
   lastTime      = ts;
   physicsAccum += frameDt;
 
-  // Step physics in fixed increments — eliminates variable-dt jitter
   while (physicsAccum >= FIXED_STEP_MS) {
     Engine.update(engine, FIXED_STEP_MS);
     physicsAccum -= FIXED_STEP_MS;
   }
 
-  if (pending && !gameOver) {
+  if (pending && !gameOver && !levelClearing) {
     wobbleTick += 0.07;
     pending.wobble = wobbleTick;
     if (keys['ArrowLeft'])  pendingX -= MOVE_SPEED;
@@ -625,13 +646,16 @@ function gameLoop(ts) {
     pending.x = pendingX;
   }
 
-  checkSettle(ts);
-  checkFallen();
+  if (!levelClearing) {
+    checkSettle(ts);
+    checkFallen();
+  }
 
+  // Draw
   drawBackground();
   drawTable();
 
-  if (pending) {
+  if (pending && !levelClearing) {
     drawAimLine(pending.x, pending.y);
     drawShapeLabel(pending.x, pending.y, pending.shape.id);
   }
@@ -639,9 +663,13 @@ function gameLoop(ts) {
   for (const cat of catBodies) {
     drawCat(cat.position.x, cat.position.y, cat._color, cat._shape, cat.angle, 0);
   }
-  if (pending && !gameOver) {
+  if (pending && !gameOver && !levelClearing) {
     drawCat(pending.x, pending.y, pending.color, pending.shape.id, 0, pending.wobble);
   }
+
+  updateAndDrawSweepCats(ts);
+  drawBanner(ts);
+  drawLevelIndicator();
 
   requestAnimationFrame(gameLoop);
 }
@@ -655,21 +683,21 @@ document.addEventListener('keydown', e => {
 document.addEventListener('keyup', e => { keys[e.code] = false; });
 
 canvas.addEventListener('click', e => {
-  if (gameOver) return;
+  if (gameOver || levelClearing) return;
   const r = canvas.getBoundingClientRect();
   pendingX = (e.clientX - r.left) * (CANVAS_W / r.width);
   dropCat();
 });
 canvas.addEventListener('touchstart', e => {
   e.preventDefault();
-  if (gameOver) return;
+  if (gameOver || levelClearing) return;
   const r = canvas.getBoundingClientRect();
   pendingX = (e.touches[0].clientX - r.left) * (CANVAS_W / r.width);
   dropCat();
 }, { passive: false });
 canvas.addEventListener('touchmove', e => {
   e.preventDefault();
-  if (!pending || gameOver) return;
+  if (!pending || gameOver || levelClearing) return;
   const r = canvas.getBoundingClientRect();
   pendingX = (e.touches[0].clientX - r.left) * (CANVAS_W / r.width);
 }, { passive: false });
