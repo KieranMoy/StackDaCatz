@@ -70,7 +70,7 @@ let wobbleTick = 0;
 // ── Physics setup ───────────────────────────────────────────────────────────
 function makeStaticBodies() {
   const table = Bodies.rectangle(TABLE_X, SLAB_CY, TABLE_W, PHYS_SLAB_H, {
-    isStatic: true, label: 'table', friction: 0.9, restitution: 0.05,
+    isStatic: true, label: 'table', friction: 1.8, frictionStatic: 2.5, restitution: 0.02,
   });
   const floor = Bodies.rectangle(CANVAS_W / 2, CANVAS_H - 10, CANVAS_W * 4, 40, {
     isStatic: true, label: 'floor',
@@ -110,11 +110,12 @@ function dropCat() {
 
   const { shape } = pending;
   const cat = Bodies.rectangle(pending.x, pending.y, shape.physW, shape.physH, {
-    restitution: 0.1,
-    friction:    0.9,
-    frictionAir: 0.015,
-    density:     0.005,
-    label:       'cat',
+    restitution:   0.02,   // barely any bounce
+    friction:      1.8,    // high surface friction — grips whatever it lands on
+    frictionAir:   0.03,   // a touch more air resistance so they settle faster
+    frictionStatic: 2.5,   // high static friction so resting cats really stick
+    density:       0.005,
+    label:         'cat',
   });
   cat._color = pending.color;
   cat._shape = shape.id;
