@@ -128,7 +128,10 @@ function randomShape() {
 }
 
 function spawnPending() {
-  pendingX = CANVAS_W / 2;
+  // Random start position across the middle 70% of the canvas so it's never
+  // trivially centred but also never spawns right at the edge
+  const margin = CANVAS_W * 0.15;
+  pendingX = margin + Math.random() * (CANVAS_W - margin * 2);
   const shape = randomShape();
   pending = {
     x:      pendingX,
