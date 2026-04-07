@@ -514,11 +514,145 @@ function drawCat(x, y, color, shape, angle, wobble) {
 // ── Scene drawing ─────────────────────────────────────────────────────────────
 function drawBackground() {
   const g = ctx.createLinearGradient(0, 0, 0, CANVAS_H);
-  g.addColorStop(0,   '#E8F5E9');
-  g.addColorStop(0.5, '#FFF8E1');
-  g.addColorStop(1,   '#FCE4EC');
+  g.addColorStop(0,    '#E8F5E9');
+  g.addColorStop(0.45, '#FFF8E1');
+  g.addColorStop(0.72, '#FFE0CC');
+  g.addColorStop(1,    '#FF9966');
   ctx.fillStyle = g;
   ctx.fillRect(0, 0, CANVAS_W, CANVAS_H);
+}
+
+// ── Lava drawing ──────────────────────────────────────────────────────────────
+// Persistent bubble state so they animate smoothly across frames
+const LAVA_BUBBLES = Array.from({ length: 9 }, (_, i) => ({
+  ox:    (i + 0.5) / 9 + (Math.random() - 0.5) * 0.06,
+  speed: 0.28 + Math.random() * 0.32,
+  size:  3 + Math.random() * 4,
+  phase: Math.random(),   // starting phase offset (0-1)
+  drift: (Math.random() - 0.5) * 28,
+}));
+
+const LAVA_HOT_SPOTS = [
+  { ox: 0.12, freq: 0.55 },
+  { ox: 0.38, freq: 0.82 },
+  { ox: 0.61, freq: 0.48 },
+  { ox: 0.84, freq: 0.70 },
+];
+
+function drawLava(now) {
+  const t = now / 1000;
+  const LAVA_TOP = TABLE_Y + TABLE_H;  // lava surface sits just below table
+
+  // ── Surface wave points ──────────────────────────────────────────────────
+  const NUM_PTS = 48;
+  const wave = [];
+  for (let i = 0; i <= NUM_PTS; i++) {
+    const x = (i / NUM_PTS) * CANVAS_W;
+    const y = LAVA_TOP
+      + Math.sin(x * 0.038 + t * 1.7)  * 4.5
+      + Math.sin(x * 0.071 - t * 2.4)  * 2.5
+      + Math.sin(x * 0.019 + t * 0.85) * 3.0;
+    wave.push({ x, y });
+  }
+
+  ctx.save();
+
+  // ── Main lava body ───────────────────────────────────────────────────────
+  const bodyGrad = ctx.createLinearGradient(0, LAVA_TOP, 0, CANVAS_H);
+  bodyGrad.addColorStop(0,    '#FF5500');
+  bodyGrad.addColorStop(0.15, '#CC2200');
+  bodyGrad.addColorStop(0.45, '#991100');
+  bodyGrad.addColorStop(1,    '#550000');
+  ctx.beginPath();
+  ctx.moveTo(0, CANVAS_H);
+  for (const p of wave) ctx.lineTo(p.x, p.y);
+  ctx.lineTo(CANVAS_W, CANVAS_H);
+  ctx.closePath();
+  ctx.fillStyle = bodyGrad;
+  ctx.fill();
+
+  // ── Dark cooling crust patches ───────────────────────────────────────────
+  const crustSeeds = [
+    { ox: 0.18, oy: 0.25, rx: 0.13, ry: 0.06, rot: -0.3 },
+    { ox: 0.55, oy: 0.40, rx: 0.10, ry: 0.05, rot:  0.5 },
+    { ox: 0.78, oy: 0.20, rx: 0.09, ry: 0.04, rot: -0.2 },
+    { ox: 0.38, oy: 0.60, rx: 0.12, ry: 0.04, rot:  0.1 },
+  ];
+  const lavaH = CANVAS_H - LAVA_TOP;
+  ctx.globalAlpha = 0.30;
+  ctx.fillStyle = '#330000';
+  for (const c of crustSeeds) {
+    const cx = c.ox * CANVAS_W + Math.sin(t * 0.18 + c.ox * 5) * 10;
+    const cy = LAVA_TOP + c.oy * lavaH + Math.sin(t * 0.12 + c.oy * 4) * 4;
+    ctx.save();
+    ctx.translate(cx, cy);
+    ctx.rotate(c.rot + Math.sin(t * 0.1) * 0.05);
+    ctx.beginPath();
+    ctx.ellipse(0, 0, c.rx * CANVAS_W, c.ry * lavaH, 0, 0, Math.PI * 2);
+    ctx.fill();
+    ctx.restore();
+  }
+  ctx.globalAlpha = 1;
+
+  // ── Hot glowing spots ────────────────────────────────────────────────────
+  for (const s of LAVA_HOT_SPOTS) {
+    const bx = s.ox * CANVAS_W + Math.sin(t * s.freq + s.ox * 8) * 22;
+    const by = LAVA_TOP + 20 + Math.sin(t * s.freq * 1.3 + s.ox * 6) * 12;
+    const pulse = 0.6 + 0.4 * Math.sin(t * s.freq * 2.1);
+    const br = (28 + 16 * pulse);
+    const g = ctx.createRadialGradient(bx, by, 0, bx, by, br);
+    g.addColorStop(0,   `rgba(255,220,60,${0.80 * pulse})`);
+    g.addColorStop(0.35,`rgba(255,100, 0,${0.50 * pulse})`);
+    g.addColorStop(1,   'rgba(180,  0, 0, 0)');
+    ctx.fillStyle = g;
+    ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
+  }
+
+  // ── Rising bubbles ───────────────────────────────────────────────────────
+  for (const b of LAVA_BUBBLES) {
+    const phase = ((t * b.speed) + b.phase) % 1;
+    // Visible in top 35% of the rise cycle; pops at surface
+    if (phase > 0.65) continue;
+    const rise = phase / 0.65;                            // 0 → 1 as it rises
+    const bx   = b.ox * CANVAS_W + Math.sin(t * 0.6 + b.ox * 20) * b.drift * rise;
+    const by   = LAVA_TOP + 8 + (1 - rise) * (lavaH * 0.35);
+    const alpha = rise < 0.85 ? 1 : 1 - (rise - 0.85) / 0.15;  // pop fade
+    ctx.save();
+    ctx.globalAlpha = alpha * 0.85;
+    ctx.strokeStyle = 'rgba(255,180,40,0.95)';
+    ctx.lineWidth   = 1.8;
+    ctx.beginPath(); ctx.arc(bx, by, b.size * (0.5 + 0.5 * rise), 0, Math.PI * 2);
+    ctx.stroke();
+    // Bright highlight inside
+    ctx.fillStyle = `rgba(255,230,120,${0.35 * alpha})`;
+    ctx.fill();
+    ctx.restore();
+  }
+
+  // ── Bright glowing wave crest ────────────────────────────────────────────
+  const crestGrad = ctx.createLinearGradient(0, LAVA_TOP - 2, 0, LAVA_TOP + 8);
+  crestGrad.addColorStop(0, 'rgba(255,210,100,0.95)');
+  crestGrad.addColorStop(1, 'rgba(255, 80,  0, 0.0)');
+  ctx.beginPath();
+  ctx.moveTo(0, CANVAS_H);
+  for (const p of wave) ctx.lineTo(p.x, p.y);
+  ctx.lineTo(CANVAS_W, CANVAS_H);
+  ctx.closePath();
+  // Clip to only the top 10px of the lava to paint the crest glow
+  ctx.save();
+  ctx.clip();
+  ctx.fillStyle = crestGrad;
+  ctx.fillRect(0, LAVA_TOP - 6, CANVAS_W, 18);
+  ctx.restore();
+
+  // ── Ambient heat glow above lava surface ────────────────────────────────
+  const heatGrad = ctx.createLinearGradient(0, LAVA_TOP - 55, 0, LAVA_TOP);
+  heatGrad.addColorStop(0, 'rgba(255,80,0,0.00)');
+  heatGrad.addColorStop(1, 'rgba(255,80,0,0.22)');
+  ctx.fillStyle = heatGrad;
+  ctx.fillRect(0, LAVA_TOP - 55, CANVAS_W, 55);
+
+  ctx.restore();
 }
 
 function drawTable() {
@@ -654,6 +788,7 @@ function gameLoop(ts) {
 
   // Draw
   drawBackground();
+  drawLava(ts);
   drawTable();
 
   if (pending && !levelClearing) {
