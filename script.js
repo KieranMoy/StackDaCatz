@@ -46,10 +46,18 @@ const CAT_SHAPES = [
 ];
 
 // ── Auto-drop timer ────────────────────────────────────────────────────────────
-const AUTO_DROP_MS   = 4000;  // ms before cat auto-drops
+const AUTO_DROP_BASE_MS  = 4000; // level-1 delay (ms)
+const AUTO_DROP_STEP_MS  =  500; // gets this much faster each level
+const AUTO_DROP_MIN_MS   =  500; // never faster than this
 let autoDropTimer    = null;  // setTimeout handle
 let autoDropStarted  = null;  // performance.now() when countdown began
+let autoDropDelay    = AUTO_DROP_BASE_MS; // actual delay used for current cat
 let levelStarted     = false; // false until the first spacebar drop of a level
+
+// Returns the auto-drop delay for the current level
+function dropDelayMs() {
+  return Math.max(AUTO_DROP_MIN_MS, AUTO_DROP_BASE_MS - (level - 1) * AUTO_DROP_STEP_MS);
+}
 
 // ── State ──────────────────────────────────────────────────────────────────
 let engine, world;
@@ -127,14 +135,15 @@ function spawnPending() {
   };
   colorIdx++;
 
-  // After the first cat of a level, subsequent cats auto-drop after AUTO_DROP_MS
+  // After the first cat of a level, subsequent cats auto-drop after dropDelayMs()
   if (levelStarted) {
+    autoDropDelay   = dropDelayMs();
     autoDropStarted = performance.now();
     autoDropTimer   = setTimeout(() => {
       autoDropTimer   = null;
       autoDropStarted = null;
       dropCat();
-    }, AUTO_DROP_MS);
+    }, autoDropDelay);
   }
 }
 
@@ -269,6 +278,7 @@ function triggerGameOver() {
 function restart() {
   if (autoDropTimer) { clearTimeout(autoDropTimer); autoDropTimer = null; }
   autoDropStarted = null;
+  autoDropDelay   = AUTO_DROP_BASE_MS;
   levelStarted    = false;
 
   World.clear(world);
@@ -825,12 +835,11 @@ function gameLoop(ts) {
 
   if (pending && !levelClearing) {
     drawAimLine(pending.x, pending.y);
-    drawShapeLabel(pending.x, pending.y, pending.shape.id);
     // Countdown — only shown when auto-drop timer is running
     if (autoDropStarted !== null) {
       const elapsed  = performance.now() - autoDropStarted; // use perf.now directly
-      const fraction = Math.max(0, 1 - elapsed / AUTO_DROP_MS); // 1→0
-      const secsLeft = Math.max(0, (AUTO_DROP_MS - elapsed) / 1000);
+      const fraction = Math.max(0, 1 - elapsed / autoDropDelay); // 1→0
+      const secsLeft = Math.max(0, (autoDropDelay - elapsed) / 1000);
       const cx = pending.x, cy = pending.y;
       const r  = 30;
 
