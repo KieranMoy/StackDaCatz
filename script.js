@@ -65,7 +65,7 @@ let catBodies     = [];
 let pending       = null;
 let pendingX      = CANVAS_W / 2;
 let score         = 0;
-let best          = 0;
+let best          = parseInt(localStorage.getItem('stackDaCatz_best') || '0', 10);
 let gameOver      = false;
 let levelClearing = false;   // true during the clear animation — blocks input
 let keys          = {};
@@ -270,7 +270,7 @@ function triggerGameOver() {
   if (gameOver) return;
   gameOver = true;
   pending  = null;
-  if (score > best) { best = score; document.getElementById('best').textContent = best; }
+  if (score > best) { best = score; localStorage.setItem('stackDaCatz_best', best); document.getElementById('best').textContent = best; }
   document.getElementById('final-score').textContent = score;
   document.getElementById('overlay').classList.remove('hidden');
 }
@@ -910,5 +910,6 @@ document.getElementById('restart-btn').addEventListener('click', restart);
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 initPhysics();
+document.getElementById('best').textContent = best; // seed display from localStorage
 spawnPending();
 requestAnimationFrame(gameLoop);
