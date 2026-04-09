@@ -845,18 +845,23 @@ function drawLevelIndicator() {
 // the bottom-third of the screen. cameraY is the world-Y of the canvas top edge;
 // it stays ≤ 0 (goes negative as the view scrolls up).
 function updateCamera() {
-  if (!isEndlessMode || catBodies.length === 0) return;
+  if (!isEndlessMode) return;
 
+  // Only settled (frozen) cats drive the camera — a cat still falling doesn't count
   let highestWorldY = TABLE_Y;
+  let hasSettled = false;
   for (const cat of catBodies) {
-    if (cat.position.y < highestWorldY) highestWorldY = cat.position.y;
+    if (!cat.isStatic) continue; // skip cats still in motion
+    if (cat.position.y < highestWorldY) { highestWorldY = cat.position.y; hasSettled = true; }
   }
+  if (!hasSettled) return;
 
-  // Pan so the highest cat sits at 1/3 from the top of the canvas
-  const screenTarget  = CANVAS_H / 3;
+  // Pan only when the top settled cat rises above HALF the screen height.
+  // screenY of that cat = highestWorldY - cameraY; pan when that < CANVAS_H / 2
+  const screenTarget  = CANVAS_H / 2;
   const targetCameraY = highestWorldY - screenTarget;
 
-  // Only ever scroll UP (targetCameraY must be more negative than current)
+  // Only ever scroll UP (targetCameraY more negative = further up)
   if (targetCameraY < cameraY) {
     cameraY += (targetCameraY - cameraY) * 0.04; // smooth lerp
   }
@@ -893,29 +898,35 @@ function gameLoop(ts) {
     updateCamera();
   }
 
-  // Draw
+  // Draw — order matters for layering:
+  //   background → table → stacked cats → lava (covers lower cats/table) → pending cat & UI
   drawBackground();
-  drawLava(ts);   // lava is screen-anchored (always at TABLE_Y + TABLE_H on screen)
   drawTable();    // table moves with cameraY
 
+  for (const cat of catBodies) {
+    // Convert world Y → screen Y by subtracting cameraY (cameraY ≤ 0 when scrolled up)
+    drawCat(cat.position.x, cat.position.y - cameraY, cat._color, cat._shape, cat.angle, 0);
+  }
+
+  drawLava(ts);   // drawn after table & cats so it visually sits in front of them
+
+  // Pending cat and its UI always drawn on top of lava
   if (pending && !levelClearing) {
     drawAimLine(pending.x, pending.y);
     // Countdown — only shown when auto-drop timer is running
     if (autoDropStarted !== null) {
-      const elapsed  = performance.now() - autoDropStarted; // use perf.now directly
-      const fraction = Math.max(0, 1 - elapsed / autoDropDelay); // 1→0
+      const elapsed  = performance.now() - autoDropStarted;
+      const fraction = Math.max(0, 1 - elapsed / autoDropDelay);
       const secsLeft = Math.max(0, (autoDropDelay - elapsed) / 1000);
       const cx = pending.x, cy = pending.y;
       const r  = 30;
 
       ctx.save();
 
-      // Background ring
       ctx.strokeStyle = 'rgba(0,0,0,0.13)';
       ctx.lineWidth   = 5;
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
 
-      // Sweeping arc (orange → red as time runs out)
       const startAngle = -Math.PI / 2;
       const endAngle   = startAngle + fraction * Math.PI * 2;
       const green = Math.round(fraction * 160);
@@ -924,29 +935,20 @@ function gameLoop(ts) {
       ctx.lineCap     = 'round';
       ctx.beginPath(); ctx.arc(cx, cy, r, startAngle, endAngle); ctx.stroke();
 
-      // Numeric countdown text (e.g. "3.7")
       const label = secsLeft.toFixed(1);
       ctx.font         = 'bold 15px Nunito, sans-serif';
       ctx.textAlign    = 'center';
       ctx.textBaseline = 'middle';
-      // White outline for readability
-      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
-      ctx.lineWidth   = 4;
+      ctx.strokeStyle  = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth    = 4;
       ctx.strokeText(label, cx + r + 18, cy);
-      // Colored fill — matches arc color
-      ctx.fillStyle = `rgb(255,${green},20)`;
+      ctx.fillStyle    = `rgb(255,${green},20)`;
       ctx.fillText(label, cx + r + 18, cy);
 
       ctx.restore();
     }
   }
-
-  for (const cat of catBodies) {
-    // Convert world Y → screen Y by subtracting cameraY (cameraY ≤ 0 when scrolled up)
-    drawCat(cat.position.x, cat.position.y - cameraY, cat._color, cat._shape, cat.angle, 0);
-  }
   if (pending && !gameOver && !levelClearing) {
-    // Pending cat is always drawn at screen-fixed DROP_Y — no camera offset
     drawCat(pending.x, pending.y, pending.color, pending.shape.id, 0, pending.wobble);
   }
 
