@@ -989,8 +989,46 @@ canvas.addEventListener('touchmove', e => {
 
 document.getElementById('restart-btn').addEventListener('click', restart);
 
+// ── Start screen ──────────────────────────────────────────────────────────────
+function dismissStartScreen() {
+  document.getElementById('start-overlay').classList.add('hidden');
+}
+
+document.getElementById('play-btn').addEventListener('click', () => {
+  dismissStartScreen();
+  spawnPending();
+});
+
+document.getElementById('endless-btn').addEventListener('click', () => {
+  dismissStartScreen();
+  // Set up endless mode immediately — table at the size it would be after 2 normal shrinks
+  isEndlessMode = true;
+  tableW        = Math.max(MIN_TABLE_W, BASE_TABLE_W * 0.80 * 0.80);
+  tableLeft     = TABLE_X - tableW / 2;
+  tableRight    = TABLE_X + tableW / 2;
+  level         = 4;
+  document.getElementById('level-display').textContent = '∞';
+
+  // Rebuild physics with the correctly-sized table
+  World.clear(world);
+  Engine.clear(engine);
+  World.add(world, makeStaticBodies());
+  registerCollisionEvents();
+
+  spawnPending();
+});
+
 // ── Boot ──────────────────────────────────────────────────────────────────────
 initPhysics();
 document.getElementById('best').textContent = best; // seed display from localStorage
-spawnPending();
+
+// Lock / unlock the endless button based on best score
+const ENDLESS_UNLOCK_SCORE = 60;
+const endlessBtn = document.getElementById('endless-btn');
+if (best < ENDLESS_UNLOCK_SCORE) {
+  endlessBtn.disabled = true;
+  endlessBtn.textContent = `🔒 Endless (reach ${ENDLESS_UNLOCK_SCORE} to unlock)`;
+}
+
+// Don't call spawnPending() yet — wait for the player to choose a mode
 requestAnimationFrame(gameLoop);
