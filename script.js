@@ -723,18 +723,6 @@ function drawAimLine(x, y) {
   ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 }
 
-const SHAPE_LABELS = {
-  normal: '😼 Normal', loaf: '🍞 Loaf', sitting: '🙀 Tall',
-  curled: '😴 Curled', stretch: '😸 Stretch',
-};
-function drawShapeLabel(x, y, shapeId) {
-  ctx.save();
-  ctx.font = 'bold 12px Nunito, sans-serif';
-  ctx.textAlign = 'center';
-  ctx.fillStyle = 'rgba(62,39,35,0.55)';
-  ctx.fillText(SHAPE_LABELS[shapeId] || '', x, y - 38);
-  ctx.restore();
-}
 
 // ── Banner overlay (level clear / level start) ────────────────────────────────
 function drawBanner(now) {
