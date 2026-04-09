@@ -46,7 +46,7 @@ const CAT_SHAPES = [
 ];
 
 // ── Auto-drop timer ────────────────────────────────────────────────────────────
-const AUTO_DROP_MS   = 1500;  // ms before cat auto-drops
+const AUTO_DROP_MS   = 4000;  // ms before cat auto-drops
 let autoDropTimer    = null;  // setTimeout handle
 let autoDropStarted  = null;  // performance.now() when countdown began
 let levelStarted     = false; // false until the first spacebar drop of a level
@@ -826,27 +826,43 @@ function gameLoop(ts) {
   if (pending && !levelClearing) {
     drawAimLine(pending.x, pending.y);
     drawShapeLabel(pending.x, pending.y, pending.shape.id);
-    // Countdown arc — only shown when auto-drop timer is running
+    // Countdown — only shown when auto-drop timer is running
     if (autoDropStarted !== null) {
-      const elapsed  = ts - autoDropStarted;
+      const elapsed  = performance.now() - autoDropStarted; // use perf.now directly
       const fraction = Math.max(0, 1 - elapsed / AUTO_DROP_MS); // 1→0
+      const secsLeft = Math.max(0, (AUTO_DROP_MS - elapsed) / 1000);
       const cx = pending.x, cy = pending.y;
-      const r  = 28;
-      // Background ring
+      const r  = 30;
+
       ctx.save();
-      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
-      ctx.lineWidth   = 4;
+
+      // Background ring
+      ctx.strokeStyle = 'rgba(0,0,0,0.13)';
+      ctx.lineWidth   = 5;
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
-      // Filled arc (sweeps away as time runs out)
+
+      // Sweeping arc (orange → red as time runs out)
       const startAngle = -Math.PI / 2;
       const endAngle   = startAngle + fraction * Math.PI * 2;
-      // Color shifts orange→red as time runs out
-      const red   = Math.round(255);
       const green = Math.round(fraction * 160);
-      ctx.strokeStyle = `rgba(${red},${green},20,0.85)`;
-      ctx.lineWidth   = 4;
+      ctx.strokeStyle = `rgba(255,${green},20,0.90)`;
+      ctx.lineWidth   = 5;
       ctx.lineCap     = 'round';
       ctx.beginPath(); ctx.arc(cx, cy, r, startAngle, endAngle); ctx.stroke();
+
+      // Numeric countdown text (e.g. "3.7")
+      const label = secsLeft.toFixed(1);
+      ctx.font         = 'bold 15px Nunito, sans-serif';
+      ctx.textAlign    = 'center';
+      ctx.textBaseline = 'middle';
+      // White outline for readability
+      ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+      ctx.lineWidth   = 4;
+      ctx.strokeText(label, cx + r + 18, cy);
+      // Colored fill — matches arc color
+      ctx.fillStyle = `rgb(255,${green},20)`;
+      ctx.fillText(label, cx + r + 18, cy);
+
       ctx.restore();
     }
   }
