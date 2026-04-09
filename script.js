@@ -25,7 +25,7 @@ const TABLE_X       = CANVAS_W / 2;
 const DROP_Y        = 60;
 const PHYS_SLAB_H   = 60;
 const SLAB_CY       = TABLE_Y + PHYS_SLAB_H / 2;
-const BASE_TABLE_W  = CANVAS_W * 0.45;  // starting width
+const BASE_TABLE_W  = CANVAS_W * 0.495; // starting width (10% wider than original)
 const MIN_TABLE_W   = CANVAS_W * 0.18;  // never shrink below this
 const CATS_PER_LEVEL = 20;
 
@@ -44,6 +44,12 @@ const CAT_SHAPES = [
   { id: 'curled',  physW: 44, physH: 44 },
   { id: 'stretch', physW: 78, physH: 24 },
 ];
+
+// ── Auto-drop timer ────────────────────────────────────────────────────────────
+const AUTO_DROP_MS   = 1500;  // ms before cat auto-drops
+let autoDropTimer    = null;  // setTimeout handle
+let autoDropStarted  = null;  // performance.now() when countdown began
+let levelStarted     = false; // false until the first spacebar drop of a level
 
 // ── State ──────────────────────────────────────────────────────────────────
 let engine, world;
@@ -120,10 +126,27 @@ function spawnPending() {
     shape, wobble: 0,
   };
   colorIdx++;
+
+  // After the first cat of a level, subsequent cats auto-drop after AUTO_DROP_MS
+  if (levelStarted) {
+    autoDropStarted = performance.now();
+    autoDropTimer   = setTimeout(() => {
+      autoDropTimer   = null;
+      autoDropStarted = null;
+      dropCat();
+    }, AUTO_DROP_MS);
+  }
 }
 
 function dropCat() {
   if (!pending || gameOver || levelClearing) return;
+
+  // Cancel any running auto-drop countdown
+  if (autoDropTimer) { clearTimeout(autoDropTimer); autoDropTimer = null; }
+  autoDropStarted = null;
+
+  // The first cat of every level/game must be started by the player
+  if (!levelStarted) levelStarted = true;
 
   const { shape } = pending;
   const cat = Bodies.rectangle(pending.x, pending.y, shape.physW, shape.physH, {
@@ -174,6 +197,11 @@ function triggerLevelClear() {
   levelClearing = true;
   pending = null;
 
+  // Cancel any auto-drop and reset the level-started gate
+  if (autoDropTimer) { clearTimeout(autoDropTimer); autoDropTimer = null; }
+  autoDropStarted = null;
+  levelStarted    = false;
+
   bannerText    = `Level ${level} Clear! 🎉`;
   bannerStart   = performance.now();
   bannerOpacity = 1;
@@ -203,7 +231,7 @@ function triggerLevelClear() {
       // Shrink the table
       level++;
       catsThisLevel = 0;
-      tableW     = Math.max(MIN_TABLE_W, tableW * 0.75);
+      tableW     = Math.max(MIN_TABLE_W, tableW * 0.80);
       tableLeft  = TABLE_X - tableW / 2;
       tableRight = TABLE_X + tableW / 2;
       document.getElementById('level-display').textContent = level;
@@ -239,6 +267,10 @@ function triggerGameOver() {
 }
 
 function restart() {
+  if (autoDropTimer) { clearTimeout(autoDropTimer); autoDropTimer = null; }
+  autoDropStarted = null;
+  levelStarted    = false;
+
   World.clear(world);
   Engine.clear(engine);
   catBodies     = [];
@@ -794,6 +826,29 @@ function gameLoop(ts) {
   if (pending && !levelClearing) {
     drawAimLine(pending.x, pending.y);
     drawShapeLabel(pending.x, pending.y, pending.shape.id);
+    // Countdown arc — only shown when auto-drop timer is running
+    if (autoDropStarted !== null) {
+      const elapsed  = ts - autoDropStarted;
+      const fraction = Math.max(0, 1 - elapsed / AUTO_DROP_MS); // 1→0
+      const cx = pending.x, cy = pending.y;
+      const r  = 28;
+      // Background ring
+      ctx.save();
+      ctx.strokeStyle = 'rgba(0,0,0,0.12)';
+      ctx.lineWidth   = 4;
+      ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.stroke();
+      // Filled arc (sweeps away as time runs out)
+      const startAngle = -Math.PI / 2;
+      const endAngle   = startAngle + fraction * Math.PI * 2;
+      // Color shifts orange→red as time runs out
+      const red   = Math.round(255);
+      const green = Math.round(fraction * 160);
+      ctx.strokeStyle = `rgba(${red},${green},20,0.85)`;
+      ctx.lineWidth   = 4;
+      ctx.lineCap     = 'round';
+      ctx.beginPath(); ctx.arc(cx, cy, r, startAngle, endAngle); ctx.stroke();
+      ctx.restore();
+    }
   }
 
   for (const cat of catBodies) {
