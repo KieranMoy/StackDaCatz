@@ -158,7 +158,10 @@ function dropCat() {
   if (!levelStarted) levelStarted = true;
 
   const { shape } = pending;
-  const cat = Bodies.rectangle(pending.x, pending.y, shape.physW, shape.physH, {
+  // Spawn body at world Y = DROP_Y + cameraY so it appears at visual top of canvas
+  // (pending.y is screen-fixed at DROP_Y; cameraY is ≤0 when scrolled up)
+  const spawnWorldY = DROP_Y + cameraY;
+  const cat = Bodies.rectangle(pending.x, spawnWorldY, shape.physW, shape.physH, {
     restitution: 0.0, friction: 1.5, frictionAir: 0.05,
     frictionStatic: 2.0, slop: 0.05, density: 0.005, label: 'cat',
   });
@@ -176,7 +179,7 @@ function dropCat() {
     catsThisLevel++;
     document.getElementById('score').textContent = score;
 
-    if (catsThisLevel >= CATS_PER_LEVEL) {
+    if (!isEndlessMode && catsThisLevel >= CATS_PER_LEVEL) {
       triggerLevelClear();
     } else {
       spawnPending();
@@ -189,6 +192,12 @@ function dropCat() {
 //   1. Flash "Level Complete!" banner for 1.2s while cats are still visible
 //   2. Sweep cats off the table (animate them flying away) over 0.8s
 //   3. Show the new (smaller) table and resume play
+
+// ── Endless mode / camera ─────────────────────────────────────────────────────
+let isEndlessMode = false;  // true from level 4 onward
+let cameraY       = 0;      // world-Y of the top of the visible canvas (≤0 when scrolled up)
+//   screenY = worldY - cameraY
+//   starts at 0, goes negative as camera pans up with the tower
 
 // Snapshot of cats for the sweep animation — stored as plain objects so we
 // can animate them independently after the physics world is cleared.
@@ -233,33 +242,57 @@ function triggerLevelClear() {
 
     sweepStart = performance.now();
 
-    // After sweep finishes, set up next level
+    // After sweep finishes, set up next level (or endless mode)
     setTimeout(() => {
       sweepCats = [];
-
-      // Shrink the table
       level++;
       catsThisLevel = 0;
-      tableW     = Math.max(MIN_TABLE_W, tableW * 0.80);
-      tableLeft  = TABLE_X - tableW / 2;
-      tableRight = TABLE_X + tableW / 2;
-      document.getElementById('level-display').textContent = level;
 
-      // Rebuild physics world with new table size
-      World.clear(world);
-      Engine.clear(engine);
-      World.add(world, makeStaticBodies());
-      registerCollisionEvents();
+      if (level >= 4) {
+        // ── Switch to endless mode ──────────────────────────────────────────
+        isEndlessMode = true;
+        cameraY       = 0;  // reset camera for the fresh start
+        // Table stays at its current size — no more shrinking
+        document.getElementById('level-display').textContent = '∞';
 
-      bannerText    = `Level ${level}`;
-      bannerStart   = performance.now();
-      bannerOpacity = 1;
+        World.clear(world);
+        Engine.clear(engine);
+        World.add(world, makeStaticBodies());
+        registerCollisionEvents();
 
-      setTimeout(() => {
-        levelClearing = false;
-        bannerText    = '';
-        spawnPending();
-      }, 900);
+        bannerText    = '😸 Endless Mode!';
+        bannerStart   = performance.now();
+        bannerOpacity = 1;
+
+        setTimeout(() => {
+          levelClearing = false;
+          bannerText    = '';
+          levelStarted  = false; // require spacebar to kick off the first cat
+          spawnPending();
+        }, 900);
+
+      } else {
+        // ── Normal level transition ─────────────────────────────────────────
+        tableW     = Math.max(MIN_TABLE_W, tableW * 0.80);
+        tableLeft  = TABLE_X - tableW / 2;
+        tableRight = TABLE_X + tableW / 2;
+        document.getElementById('level-display').textContent = level;
+
+        World.clear(world);
+        Engine.clear(engine);
+        World.add(world, makeStaticBodies());
+        registerCollisionEvents();
+
+        bannerText    = `Level ${level}`;
+        bannerStart   = performance.now();
+        bannerOpacity = 1;
+
+        setTimeout(() => {
+          levelClearing = false;
+          bannerText    = '';
+          spawnPending();
+        }, 900);
+      }
 
     }, SWEEP_MS + 100);
   }, BANNER_MS);
@@ -280,6 +313,8 @@ function restart() {
   autoDropStarted = null;
   autoDropDelay   = AUTO_DROP_BASE_MS;
   levelStarted    = false;
+  isEndlessMode   = false;
+  cameraY         = 0;
 
   World.clear(world);
   Engine.clear(engine);
@@ -342,9 +377,13 @@ function checkSettle(now) {
 // ── Fall detection ────────────────────────────────────────────────────────────
 function checkFallen() {
   if (levelClearing) return;
+  // World Y of the visual lava surface — anything below this is "in the lava"
+  // screenY of lava = TABLE_Y + TABLE_H (constant); worldY = screenY + cameraY
+  const lavaWorldY = TABLE_Y + TABLE_H + cameraY;
   for (const cat of catBodies) {
-    if (cat.position.y > CANVAS_H + 60) { triggerGameOver(); return; }
-    if (cat.position.y < TABLE_Y - 10) continue;
+    if (cat.isStatic) continue; // frozen/settled cats are safe
+    if (cat.position.y > lavaWorldY + 60) { triggerGameOver(); return; }
+    if (cat.position.y < TABLE_Y - 10) continue; // above table in world — still falling
     const halfW   = (cat._physW || 30) / 2;
     const offLeft  = cat.position.x + halfW < tableLeft;
     const offRight = cat.position.x - halfW > tableRight;
@@ -699,27 +738,38 @@ function drawLava(now) {
 
 function drawTable() {
   const tx = TABLE_X - tableW / 2;
+  // screenY = worldY - cameraY; cameraY ≤ 0, so TABLE_Y - cameraY ≥ TABLE_Y
+  const syTop = TABLE_Y - cameraY;           // table top in screen coords
+  const syBot = syTop + TABLE_H;             // table bottom
+  if (syTop > CANVAS_H) return;              // table is off the bottom — don't draw
+
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.18)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
-  const g = ctx.createLinearGradient(tx, TABLE_Y, tx, TABLE_Y + TABLE_H);
+  const g = ctx.createLinearGradient(tx, syTop, tx, syBot);
   g.addColorStop(0, '#A1887F'); g.addColorStop(1, '#6D4C41');
   ctx.fillStyle = g;
-  ctx.beginPath(); ctx.roundRect(tx, TABLE_Y, tableW, TABLE_H, 4); ctx.fill();
+  ctx.beginPath(); ctx.roundRect(tx, syTop, tableW, TABLE_H, 4); ctx.fill();
   ctx.restore();
-  const legW = 14, legY = TABLE_Y + TABLE_H, legH = CANVAS_H - legY;
-  const lg = ctx.createLinearGradient(0, legY, 0, legY + legH);
-  lg.addColorStop(0, '#8D6E63'); lg.addColorStop(1, '#5D4037');
-  ctx.fillStyle = lg;
-  ctx.fillRect(tx + 20, legY, legW, legH);
-  ctx.fillRect(tx + tableW - 20 - legW, legY, legW, legH);
+
+  const legW = 14;
+  const legH = Math.max(0, CANVAS_H - syBot); // legs extend to canvas bottom
+  if (legH > 0) {
+    const lg = ctx.createLinearGradient(0, syBot, 0, syBot + legH);
+    lg.addColorStop(0, '#8D6E63'); lg.addColorStop(1, '#5D4037');
+    ctx.fillStyle = lg;
+    ctx.fillRect(tx + 20, syBot, legW, legH);
+    ctx.fillRect(tx + tableW - 20 - legW, syBot, legW, legH);
+  }
 }
 
 function drawAimLine(x, y) {
+  // Aim line drops from pending cat (screen y) to the table (screen y = TABLE_Y - cameraY)
+  const tableScreenY = Math.min(CANVAS_H, TABLE_Y - cameraY);
   ctx.save();
   ctx.setLineDash([5, 7]);
   ctx.strokeStyle = 'rgba(0,0,0,0.10)';
   ctx.lineWidth   = 2;
-  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, TABLE_Y);
+  ctx.beginPath(); ctx.moveTo(x, y); ctx.lineTo(x, tableScreenY);
   ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 }
 
@@ -765,7 +815,7 @@ function updateAndDrawSweepCats(now) {
     // Simple projectile: apply velocity + gravity over time
     const dt = t * (SWEEP_MS / 1000);
     const sx = cat.x + cat.vx * dt * 60;
-    const sy = cat.y + cat.vy * dt * 60 + 0.5 * 18 * dt * dt * 60;
+    const sy = (cat.y - cameraY) + cat.vy * dt * 60 + 0.5 * 18 * dt * dt * 60;
     const sa = cat.angle + cat.vx * 0.04;
     // Fade out in second half
     const alpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
@@ -782,8 +832,34 @@ function drawLevelIndicator() {
   ctx.font = 'bold 13px Nunito, sans-serif';
   ctx.textAlign = 'left';
   ctx.fillStyle = 'rgba(62,39,35,0.45)';
-  ctx.fillText(`Lv.${level}  ${catsThisLevel}/${CATS_PER_LEVEL} cats`, 10, CANVAS_H - 10);
+  if (isEndlessMode) {
+    ctx.fillText(`∞ Endless  —  ${score} cats stacked`, 10, CANVAS_H - 10);
+  } else {
+    ctx.fillText(`Lv.${level}  ${catsThisLevel}/${CATS_PER_LEVEL} cats`, 10, CANVAS_H - 10);
+  }
   ctx.restore();
+}
+
+// ── Camera ───────────────────────────────────────────────────────────────────
+// Only active in endless mode. Pans up when the highest stacked cat rises above
+// the bottom-third of the screen. cameraY is the world-Y of the canvas top edge;
+// it stays ≤ 0 (goes negative as the view scrolls up).
+function updateCamera() {
+  if (!isEndlessMode || catBodies.length === 0) return;
+
+  let highestWorldY = TABLE_Y;
+  for (const cat of catBodies) {
+    if (cat.position.y < highestWorldY) highestWorldY = cat.position.y;
+  }
+
+  // Pan so the highest cat sits at 1/3 from the top of the canvas
+  const screenTarget  = CANVAS_H / 3;
+  const targetCameraY = highestWorldY - screenTarget;
+
+  // Only ever scroll UP (targetCameraY must be more negative than current)
+  if (targetCameraY < cameraY) {
+    cameraY += (targetCameraY - cameraY) * 0.04; // smooth lerp
+  }
 }
 
 // ── Game loop ─────────────────────────────────────────────────────────────────
@@ -814,12 +890,13 @@ function gameLoop(ts) {
   if (!levelClearing) {
     checkSettle(ts);
     checkFallen();
+    updateCamera();
   }
 
   // Draw
   drawBackground();
-  drawLava(ts);
-  drawTable();
+  drawLava(ts);   // lava is screen-anchored (always at TABLE_Y + TABLE_H on screen)
+  drawTable();    // table moves with cameraY
 
   if (pending && !levelClearing) {
     drawAimLine(pending.x, pending.y);
@@ -865,9 +942,11 @@ function gameLoop(ts) {
   }
 
   for (const cat of catBodies) {
-    drawCat(cat.position.x, cat.position.y, cat._color, cat._shape, cat.angle, 0);
+    // Convert world Y → screen Y by subtracting cameraY (cameraY ≤ 0 when scrolled up)
+    drawCat(cat.position.x, cat.position.y - cameraY, cat._color, cat._shape, cat.angle, 0);
   }
   if (pending && !gameOver && !levelClearing) {
+    // Pending cat is always drawn at screen-fixed DROP_Y — no camera offset
     drawCat(pending.x, pending.y, pending.color, pending.shape.id, 0, pending.wobble);
   }
 
