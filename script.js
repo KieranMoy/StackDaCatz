@@ -25,16 +25,16 @@ const TABLE_X       = CANVAS_W / 2;
 const DROP_Y        = 60;
 const PHYS_SLAB_H   = 60;
 const SLAB_CY       = TABLE_Y + PHYS_SLAB_H / 2;
-const BASE_TABLE_W  = CANVAS_W * 0.495; // starting width (10% wider than original)
-const MIN_TABLE_W   = CANVAS_W * 0.18;  // never shrink below this
+const BASE_TABLE_W  = CANVAS_W * 0.495;
+const MIN_TABLE_W   = CANVAS_W * 0.18;
 const CATS_PER_LEVEL = 20;
 
-// ── Level state (mutable — changes each level) ────────────────────────────────
+// ── Level state ───────────────────────────────────────────────────────────────
 let tableW     = BASE_TABLE_W;
 let tableLeft  = TABLE_X - tableW / 2;
 let tableRight = TABLE_X + tableW / 2;
 let level      = 1;
-let catsThisLevel = 0;   // how many cats placed in the current level
+let catsThisLevel = 0;
 
 // ── Cat shape definitions ─────────────────────────────────────────────────────
 const CAT_SHAPES = [
@@ -46,15 +46,14 @@ const CAT_SHAPES = [
 ];
 
 // ── Auto-drop timer ────────────────────────────────────────────────────────────
-const AUTO_DROP_BASE_MS  = 4000; // level-1 delay (ms)
-const AUTO_DROP_STEP_MS  =  500; // gets this much faster each level
-const AUTO_DROP_MIN_MS   =  500; // never faster than this
-let autoDropTimer    = null;  // setTimeout handle
-let autoDropStarted  = null;  // performance.now() when countdown began
-let autoDropDelay    = AUTO_DROP_BASE_MS; // actual delay used for current cat
-let levelStarted     = false; // false until the first spacebar drop of a level
+const AUTO_DROP_BASE_MS  = 4000;
+const AUTO_DROP_STEP_MS  = 500;
+const AUTO_DROP_MIN_MS   = 500;
+let autoDropTimer    = null;
+let autoDropStarted  = null;
+let autoDropDelay    = AUTO_DROP_BASE_MS;
+let levelStarted     = false;
 
-// Returns the auto-drop delay for the current level
 function dropDelayMs() {
   return Math.max(AUTO_DROP_MIN_MS, AUTO_DROP_BASE_MS - (level - 1) * AUTO_DROP_STEP_MS);
 }
@@ -67,10 +66,78 @@ let pendingX      = CANVAS_W / 2;
 let score         = 0;
 let best          = parseInt(localStorage.getItem('stackDaCatz_best') || '0', 10);
 let gameOver      = false;
-let levelClearing = false;   // true during the clear animation — blocks input
+let levelClearing = false;
 let keys          = {};
 let colorIdx      = 0;
 let wobbleTick    = 0;
+
+// ── Heart particle effect ─────────────────────────────────────────────────────
+let heartParticles = [];
+
+function heartsUnlocked() {
+  return score >= 300 || best >= 300;
+}
+
+function createHeartParticle(x, y) {
+  return {
+    x: x + (Math.random() - 0.5) * 26,
+    y: y + (Math.random() - 0.5) * 22,
+    vx: (Math.random() - 0.5) * 0.45,
+    vy: -0.25 - Math.random() * 0.45,
+    size: 3 + Math.random() * 3,
+    life: 45 + Math.random() * 35,
+    maxLife: 80,
+    rotation: (Math.random() - 0.5) * 0.8,
+    spin: (Math.random() - 0.5) * 0.025,
+  };
+}
+
+function maybeSpawnHeart(x, y, chance) {
+  if (!heartsUnlocked()) return;
+  if (heartParticles.length > 180) return;
+  if (Math.random() < chance) {
+    const p = createHeartParticle(x, y);
+    p.maxLife = p.life;
+    heartParticles.push(p);
+  }
+}
+
+function drawHeartShape(x, y, size, rotation, alpha) {
+  ctx.save();
+  ctx.translate(x, y);
+  ctx.rotate(rotation);
+  ctx.scale(size, size);
+  ctx.globalAlpha = alpha;
+  ctx.fillStyle = 'rgba(255, 105, 180, 0.9)';
+  ctx.beginPath();
+  ctx.moveTo(0, 0.35);
+  ctx.bezierCurveTo(-1.1, -0.45, -0.95, -1.35, -0.25, -1.35);
+  ctx.bezierCurveTo(0.15, -1.35, 0.35, -1.05, 0, -0.7);
+  ctx.bezierCurveTo(-0.35, -1.05, -0.15, -1.35, 0.25, -1.35);
+  ctx.bezierCurveTo(0.95, -1.35, 1.1, -0.45, 0, 0.35);
+  ctx.closePath();
+  ctx.fill();
+  ctx.restore();
+}
+
+function updateAndDrawHearts() {
+  for (let i = heartParticles.length - 1; i >= 0; i--) {
+    const p = heartParticles[i];
+    p.x += p.vx;
+    p.y += p.vy;
+    p.vy -= 0.002;
+    p.rotation += p.spin;
+    p.life--;
+
+    if (p.life <= 0) {
+      heartParticles.splice(i, 1);
+      continue;
+    }
+
+    const alpha = Math.max(0, p.life / p.maxLife);
+    drawHeartShape(p.x, p.y, p.size, p.rotation, alpha);
+  }
+}
 
 // ── Physics setup ─────────────────────────────────────────────────────────────
 function makeStaticBodies() {
@@ -135,7 +202,6 @@ function spawnPending() {
   };
   colorIdx++;
 
-  // After the first cat of a level, subsequent cats auto-drop after dropDelayMs()
   if (levelStarted) {
     autoDropDelay   = dropDelayMs();
     autoDropStarted = performance.now();
@@ -150,16 +216,12 @@ function spawnPending() {
 function dropCat() {
   if (!pending || gameOver || levelClearing) return;
 
-  // Cancel any running auto-drop countdown
   if (autoDropTimer) { clearTimeout(autoDropTimer); autoDropTimer = null; }
   autoDropStarted = null;
 
-  // The first cat of every level/game must be started by the player
   if (!levelStarted) levelStarted = true;
 
   const { shape } = pending;
-  // Spawn body at world Y = DROP_Y + cameraY so it appears at visual top of canvas
-  // (pending.y is screen-fixed at DROP_Y; cameraY is ≤0 when scrolled up)
   const spawnWorldY = DROP_Y + cameraY;
   const cat = Bodies.rectangle(pending.x, spawnWorldY, shape.physW, shape.physH, {
     restitution: 0.0, friction: 1.5, frictionAir: 0.05,
@@ -187,22 +249,12 @@ function dropCat() {
   }, 650);
 }
 
-// ── Level clear sequence ──────────────────────────────────────────────────────
-// The animation has three phases driven by setTimeout:
-//   1. Flash "Level Complete!" banner for 1.2s while cats are still visible
-//   2. Sweep cats off the table (animate them flying away) over 0.8s
-//   3. Show the new (smaller) table and resume play
-
 // ── Endless mode / camera ─────────────────────────────────────────────────────
-let isEndlessMode = false;  // true from level 4 onward
-let cameraY       = 0;      // world-Y of the top of the visible canvas (≤0 when scrolled up)
-//   screenY = worldY - cameraY
-//   starts at 0, goes negative as camera pans up with the tower
+let isEndlessMode = false;
+let cameraY       = 0;
 
-// Snapshot of cats for the sweep animation — stored as plain objects so we
-// can animate them independently after the physics world is cleared.
-let sweepCats   = [];   // [{ x, y, angle, color, shape, vx, vy }]
-let sweepStart  = null; // timestamp when sweep animation began
+let sweepCats   = [];
+let sweepStart  = null;
 const SWEEP_MS  = 800;
 
 let bannerText    = '';
@@ -215,7 +267,6 @@ function triggerLevelClear() {
   levelClearing = true;
   pending = null;
 
-  // Cancel any auto-drop and reset the level-started gate
   if (autoDropTimer) { clearTimeout(autoDropTimer); autoDropTimer = null; }
   autoDropStarted = null;
   levelStarted    = false;
@@ -224,35 +275,28 @@ function triggerLevelClear() {
   bannerStart   = performance.now();
   bannerOpacity = 1;
 
-  // After banner has shown, sweep the cats away
   setTimeout(() => {
-    // Snapshot all cat positions for the sweep animation
     sweepCats = catBodies.map(cat => ({
       x: cat.position.x, y: cat.position.y,
       angle: cat.angle,
       color: cat._color, shape: cat._shape,
-      // random outward velocity for the sweep
       vx: (Math.random() - 0.5) * 18,
       vy: -(Math.random() * 10 + 6),
     }));
 
-    // Clear the physics world of cat bodies
     for (const cat of catBodies) World.remove(world, cat);
     catBodies = [];
 
     sweepStart = performance.now();
 
-    // After sweep finishes, set up next level (or endless mode)
     setTimeout(() => {
       sweepCats = [];
       level++;
       catsThisLevel = 0;
 
       if (level >= 4) {
-        // ── Switch to endless mode ──────────────────────────────────────────
         isEndlessMode = true;
-        cameraY       = 0;  // reset camera for the fresh start
-        // Table stays at its current size — no more shrinking
+        cameraY       = 0;
         document.getElementById('level-display').textContent = '∞';
 
         World.clear(world);
@@ -267,12 +311,11 @@ function triggerLevelClear() {
         setTimeout(() => {
           levelClearing = false;
           bannerText    = '';
-          levelStarted  = false; // require spacebar to kick off the first cat
+          levelStarted  = false;
           spawnPending();
         }, 900);
 
       } else {
-        // ── Normal level transition ─────────────────────────────────────────
         tableW     = Math.max(MIN_TABLE_W, tableW * 0.80);
         tableLeft  = TABLE_X - tableW / 2;
         tableRight = TABLE_X + tableW / 2;
@@ -318,20 +361,21 @@ function restart() {
 
   World.clear(world);
   Engine.clear(engine);
-  catBodies     = [];
-  sweepCats     = [];
-  score         = 0;
-  gameOver      = false;
-  levelClearing = false;
-  colorIdx      = 0;
-  wobbleTick    = 0;
-  level         = 1;
-  catsThisLevel = 0;
-  tableW        = BASE_TABLE_W;
-  tableLeft     = TABLE_X - tableW / 2;
-  tableRight    = TABLE_X + tableW / 2;
-  bannerText    = '';
-  sweepStart    = null;
+  catBodies      = [];
+  sweepCats      = [];
+  heartParticles = [];
+  score          = 0;
+  gameOver       = false;
+  levelClearing  = false;
+  colorIdx       = 0;
+  wobbleTick     = 0;
+  level          = 1;
+  catsThisLevel  = 0;
+  tableW         = BASE_TABLE_W;
+  tableLeft      = TABLE_X - tableW / 2;
+  tableRight     = TABLE_X + tableW / 2;
+  bannerText     = '';
+  sweepStart     = null;
   document.getElementById('score').textContent = '0';
   document.getElementById('level-display').textContent = '1';
   document.getElementById('overlay').classList.add('hidden');
@@ -374,16 +418,13 @@ function checkSettle(now) {
   }
 }
 
-// ── Fall detection ────────────────────────────────────────────────────────────
 function checkFallen() {
   if (levelClearing) return;
-  // World Y of the visual lava surface — anything below this is "in the lava"
-  // screenY of lava = TABLE_Y + TABLE_H (constant); worldY = screenY + cameraY
   const lavaWorldY = TABLE_Y + TABLE_H + cameraY;
   for (const cat of catBodies) {
-    if (cat.isStatic) continue; // frozen/settled cats are safe
+    if (cat.isStatic) continue;
     if (cat.position.y > lavaWorldY + 60) { triggerGameOver(); return; }
-    if (cat.position.y < TABLE_Y - 10) continue; // above table in world — still falling
+    if (cat.position.y < TABLE_Y - 10) continue;
     const halfW   = (cat._physW || 30) / 2;
     const offLeft  = cat.position.x + halfW < tableLeft;
     const offRight = cat.position.x - halfW > tableRight;
@@ -604,12 +645,11 @@ function drawBackground() {
 }
 
 // ── Lava drawing ──────────────────────────────────────────────────────────────
-// Persistent bubble state so they animate smoothly across frames
 const LAVA_BUBBLES = Array.from({ length: 9 }, (_, i) => ({
   ox:    (i + 0.5) / 9 + (Math.random() - 0.5) * 0.06,
   speed: 0.28 + Math.random() * 0.32,
   size:  3 + Math.random() * 4,
-  phase: Math.random(),   // starting phase offset (0-1)
+  phase: Math.random(),
   drift: (Math.random() - 0.5) * 28,
 }));
 
@@ -622,9 +662,8 @@ const LAVA_HOT_SPOTS = [
 
 function drawLava(now) {
   const t = now / 1000;
-  const LAVA_TOP = TABLE_Y + TABLE_H;  // lava surface sits just below table
+  const LAVA_TOP = TABLE_Y + TABLE_H;
 
-  // ── Surface wave points ──────────────────────────────────────────────────
   const NUM_PTS = 48;
   const wave = [];
   for (let i = 0; i <= NUM_PTS; i++) {
@@ -638,7 +677,6 @@ function drawLava(now) {
 
   ctx.save();
 
-  // ── Main lava body ───────────────────────────────────────────────────────
   const bodyGrad = ctx.createLinearGradient(0, LAVA_TOP, 0, CANVAS_H);
   bodyGrad.addColorStop(0,    '#FF5500');
   bodyGrad.addColorStop(0.15, '#CC2200');
@@ -652,7 +690,6 @@ function drawLava(now) {
   ctx.fillStyle = bodyGrad;
   ctx.fill();
 
-  // ── Dark cooling crust patches ───────────────────────────────────────────
   const crustSeeds = [
     { ox: 0.18, oy: 0.25, rx: 0.13, ry: 0.06, rot: -0.3 },
     { ox: 0.55, oy: 0.40, rx: 0.10, ry: 0.05, rot:  0.5 },
@@ -675,7 +712,6 @@ function drawLava(now) {
   }
   ctx.globalAlpha = 1;
 
-  // ── Hot glowing spots ────────────────────────────────────────────────────
   for (const s of LAVA_HOT_SPOTS) {
     const bx = s.ox * CANVAS_W + Math.sin(t * s.freq + s.ox * 8) * 22;
     const by = LAVA_TOP + 20 + Math.sin(t * s.freq * 1.3 + s.ox * 6) * 12;
@@ -689,28 +725,24 @@ function drawLava(now) {
     ctx.beginPath(); ctx.arc(bx, by, br, 0, Math.PI * 2); ctx.fill();
   }
 
-  // ── Rising bubbles ───────────────────────────────────────────────────────
   for (const b of LAVA_BUBBLES) {
     const phase = ((t * b.speed) + b.phase) % 1;
-    // Visible in top 35% of the rise cycle; pops at surface
     if (phase > 0.65) continue;
-    const rise = phase / 0.65;                            // 0 → 1 as it rises
+    const rise = phase / 0.65;
     const bx   = b.ox * CANVAS_W + Math.sin(t * 0.6 + b.ox * 20) * b.drift * rise;
     const by   = LAVA_TOP + 8 + (1 - rise) * (lavaH * 0.35);
-    const alpha = rise < 0.85 ? 1 : 1 - (rise - 0.85) / 0.15;  // pop fade
+    const alpha = rise < 0.85 ? 1 : 1 - (rise - 0.85) / 0.15;
     ctx.save();
     ctx.globalAlpha = alpha * 0.85;
     ctx.strokeStyle = 'rgba(255,180,40,0.95)';
     ctx.lineWidth   = 1.8;
     ctx.beginPath(); ctx.arc(bx, by, b.size * (0.5 + 0.5 * rise), 0, Math.PI * 2);
     ctx.stroke();
-    // Bright highlight inside
     ctx.fillStyle = `rgba(255,230,120,${0.35 * alpha})`;
     ctx.fill();
     ctx.restore();
   }
 
-  // ── Bright glowing wave crest ────────────────────────────────────────────
   const crestGrad = ctx.createLinearGradient(0, LAVA_TOP - 2, 0, LAVA_TOP + 8);
   crestGrad.addColorStop(0, 'rgba(255,210,100,0.95)');
   crestGrad.addColorStop(1, 'rgba(255, 80,  0, 0.0)');
@@ -719,14 +751,12 @@ function drawLava(now) {
   for (const p of wave) ctx.lineTo(p.x, p.y);
   ctx.lineTo(CANVAS_W, CANVAS_H);
   ctx.closePath();
-  // Clip to only the top 10px of the lava to paint the crest glow
   ctx.save();
   ctx.clip();
   ctx.fillStyle = crestGrad;
   ctx.fillRect(0, LAVA_TOP - 6, CANVAS_W, 18);
   ctx.restore();
 
-  // ── Ambient heat glow above lava surface ────────────────────────────────
   const heatGrad = ctx.createLinearGradient(0, LAVA_TOP - 55, 0, LAVA_TOP);
   heatGrad.addColorStop(0, 'rgba(255,80,0,0.00)');
   heatGrad.addColorStop(1, 'rgba(255,80,0,0.22)');
@@ -738,10 +768,9 @@ function drawLava(now) {
 
 function drawTable() {
   const tx = TABLE_X - tableW / 2;
-  // screenY = worldY - cameraY; cameraY ≤ 0, so TABLE_Y - cameraY ≥ TABLE_Y
-  const syTop = TABLE_Y - cameraY;           // table top in screen coords
-  const syBot = syTop + TABLE_H;             // table bottom
-  if (syTop > CANVAS_H) return;              // table is off the bottom — don't draw
+  const syTop = TABLE_Y - cameraY;
+  const syBot = syTop + TABLE_H;
+  if (syTop > CANVAS_H) return;
 
   ctx.save();
   ctx.shadowColor = 'rgba(0,0,0,0.18)'; ctx.shadowBlur = 10; ctx.shadowOffsetY = 4;
@@ -752,7 +781,7 @@ function drawTable() {
   ctx.restore();
 
   const legW = 14;
-  const legH = Math.max(0, CANVAS_H - syBot); // legs extend to canvas bottom
+  const legH = Math.max(0, CANVAS_H - syBot);
   if (legH > 0) {
     const lg = ctx.createLinearGradient(0, syBot, 0, syBot + legH);
     lg.addColorStop(0, '#8D6E63'); lg.addColorStop(1, '#5D4037');
@@ -763,7 +792,6 @@ function drawTable() {
 }
 
 function drawAimLine(x, y) {
-  // Aim line drops from pending cat (screen y) to the table (screen y = TABLE_Y - cameraY)
   const tableScreenY = Math.min(CANVAS_H, TABLE_Y - cameraY);
   ctx.save();
   ctx.setLineDash([5, 7]);
@@ -773,12 +801,9 @@ function drawAimLine(x, y) {
   ctx.stroke(); ctx.setLineDash([]); ctx.restore();
 }
 
-
-// ── Banner overlay (level clear / level start) ────────────────────────────────
 function drawBanner(now) {
   if (!bannerText || !bannerStart) return;
   const age = now - bannerStart;
-  // Fade in for 200ms, hold, fade out over last 300ms of BANNER_MS
   let alpha = 1;
   if (age < 200) alpha = age / 200;
   else if (age > BANNER_MS - 300) alpha = Math.max(0, (BANNER_MS - age) / 300);
@@ -787,7 +812,6 @@ function drawBanner(now) {
   ctx.save();
   ctx.globalAlpha = alpha;
 
-  // Semi-transparent pill
   const tw = Math.min(CANVAS_W - 40, 360);
   const th = 72;
   const tx = (CANVAS_W - tw) / 2;
@@ -806,27 +830,24 @@ function drawBanner(now) {
   ctx.restore();
 }
 
-// ── Sweep animation ───────────────────────────────────────────────────────────
 function updateAndDrawSweepCats(now) {
   if (!sweepCats.length || !sweepStart) return;
-  const t = (now - sweepStart) / SWEEP_MS; // 0 → 1
+  const t = (now - sweepStart) / SWEEP_MS;
 
   for (const cat of sweepCats) {
-    // Simple projectile: apply velocity + gravity over time
     const dt = t * (SWEEP_MS / 1000);
     const sx = cat.x + cat.vx * dt * 60;
     const sy = (cat.y - cameraY) + cat.vy * dt * 60 + 0.5 * 18 * dt * dt * 60;
     const sa = cat.angle + cat.vx * 0.04;
-    // Fade out in second half
     const alpha = t < 0.5 ? 1 : 1 - (t - 0.5) * 2;
     ctx.save();
     ctx.globalAlpha = Math.max(0, alpha);
     drawCat(sx, sy, cat.color, cat.shape, sa, 0);
+    maybeSpawnHeart(sx, sy, 0.16);
     ctx.restore();
   }
 }
 
-// ── Level indicator ───────────────────────────────────────────────────────────
 function drawLevelIndicator() {
   ctx.save();
   ctx.font = 'bold 13px Nunito, sans-serif';
@@ -840,30 +861,22 @@ function drawLevelIndicator() {
   ctx.restore();
 }
 
-// ── Camera ───────────────────────────────────────────────────────────────────
-// Only active in endless mode. Pans up when the highest stacked cat rises above
-// the bottom-third of the screen. cameraY is the world-Y of the canvas top edge;
-// it stays ≤ 0 (goes negative as the view scrolls up).
 function updateCamera() {
   if (!isEndlessMode) return;
 
-  // Only settled (frozen) cats drive the camera — a cat still falling doesn't count
   let highestWorldY = TABLE_Y;
   let hasSettled = false;
   for (const cat of catBodies) {
-    if (!cat.isStatic) continue; // skip cats still in motion
+    if (!cat.isStatic) continue;
     if (cat.position.y < highestWorldY) { highestWorldY = cat.position.y; hasSettled = true; }
   }
   if (!hasSettled) return;
 
-  // Pan only when the top settled cat rises above HALF the screen height.
-  // screenY of that cat = highestWorldY - cameraY; pan when that < CANVAS_H / 2
   const screenTarget  = CANVAS_H / 2;
   const targetCameraY = highestWorldY - screenTarget;
 
-  // Only ever scroll UP (targetCameraY more negative = further up)
   if (targetCameraY < cameraY) {
-    cameraY += (targetCameraY - cameraY) * 0.04; // smooth lerp
+    cameraY += (targetCameraY - cameraY) * 0.04;
   }
 }
 
@@ -898,22 +911,21 @@ function gameLoop(ts) {
     updateCamera();
   }
 
-  // Draw — order matters for layering:
-  //   background → table → stacked cats → lava (covers lower cats/table) → pending cat & UI
   drawBackground();
-  drawTable();    // table moves with cameraY
+  drawTable();
 
   for (const cat of catBodies) {
-    // Convert world Y → screen Y by subtracting cameraY (cameraY ≤ 0 when scrolled up)
-    drawCat(cat.position.x, cat.position.y - cameraY, cat._color, cat._shape, cat.angle, 0);
+    const sx = cat.position.x;
+    const sy = cat.position.y - cameraY;
+    drawCat(sx, sy, cat._color, cat._shape, cat.angle, 0);
+    maybeSpawnHeart(sx, sy, cat.isStatic ? 0.08 : 0.12);
   }
 
-  drawLava(ts);   // drawn after table & cats so it visually sits in front of them
+  drawLava(ts);
 
-  // Pending cat and its UI always drawn on top of lava
   if (pending && !levelClearing) {
     drawAimLine(pending.x, pending.y);
-    // Countdown — only shown when auto-drop timer is running
+
     if (autoDropStarted !== null) {
       const elapsed  = performance.now() - autoDropStarted;
       const fraction = Math.max(0, 1 - elapsed / autoDropDelay);
@@ -948,11 +960,14 @@ function gameLoop(ts) {
       ctx.restore();
     }
   }
+
   if (pending && !gameOver && !levelClearing) {
     drawCat(pending.x, pending.y, pending.color, pending.shape.id, 0, pending.wobble);
+    maybeSpawnHeart(pending.x, pending.y, 0.18);
   }
 
   updateAndDrawSweepCats(ts);
+  updateAndDrawHearts();
   drawBanner(ts);
   drawLevelIndicator();
 
@@ -1001,7 +1016,7 @@ document.getElementById('play-btn').addEventListener('click', () => {
 
 document.getElementById('endless-btn').addEventListener('click', () => {
   dismissStartScreen();
-  // Set up endless mode immediately — table at the size it would be after 2 normal shrinks
+
   isEndlessMode = true;
   tableW        = Math.max(MIN_TABLE_W, BASE_TABLE_W * 0.80 * 0.80);
   tableLeft     = TABLE_X - tableW / 2;
@@ -1009,7 +1024,6 @@ document.getElementById('endless-btn').addEventListener('click', () => {
   level         = 4;
   document.getElementById('level-display').textContent = '∞';
 
-  // Rebuild physics with the correctly-sized table
   World.clear(world);
   Engine.clear(engine);
   World.add(world, makeStaticBodies());
@@ -1020,9 +1034,8 @@ document.getElementById('endless-btn').addEventListener('click', () => {
 
 // ── Boot ──────────────────────────────────────────────────────────────────────
 initPhysics();
-document.getElementById('best').textContent = best; // seed display from localStorage
+document.getElementById('best').textContent = best;
 
-// Lock / unlock the endless button based on best score
 const ENDLESS_UNLOCK_SCORE = 60;
 const endlessBtn = document.getElementById('endless-btn');
 if (best < ENDLESS_UNLOCK_SCORE) {
@@ -1030,5 +1043,4 @@ if (best < ENDLESS_UNLOCK_SCORE) {
   endlessBtn.textContent = `🔒 Endless (reach ${ENDLESS_UNLOCK_SCORE} to unlock)`;
 }
 
-// Don't call spawnPending() yet — wait for the player to choose a mode
 requestAnimationFrame(gameLoop);
